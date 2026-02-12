@@ -1,5 +1,14 @@
 # Script Manager
 
+[![Build and Test](https://github.com/jomardyan/Script-Manager/actions/workflows/build-test.yml/badge.svg)](https://github.com/jomardyan/Script-Manager/actions/workflows/build-test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub stars](https://img.shields.io/github/stars/jomardyan/Script-Manager.svg?style=social&label=Star)](https://github.com/jomardyan/Script-Manager)
+[![GitHub forks](https://img.shields.io/github/forks/jomardyan/Script-Manager.svg?style=social&label=Fork)](https://github.com/jomardyan/Script-Manager/fork)
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![React](https://img.shields.io/badge/React-18.2-61DAFB.svg?logo=react)](https://reactjs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker)](https://www.docker.com/)
+
 A web application for managing large collections of script files. Index, search, tag, and organize your Python, PowerShell, Bash, SQL, and other script files across multiple directories.
 
 ## Features
