@@ -170,6 +170,23 @@ async def init_db():
             )
         """)
         
+        # Create attachments table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                script_id INTEGER,
+                note_id INTEGER,
+                filename TEXT NOT NULL,
+                original_filename TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                mime_type TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE,
+                FOREIGN KEY (note_id) REFERENCES script_notes(id) ON DELETE CASCADE
+            )
+        """)
+        
         # Create saved_searches table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS saved_searches (

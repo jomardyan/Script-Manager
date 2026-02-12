@@ -172,3 +172,14 @@ class FTSSearchRequest(BaseModel):
     search_notes: bool = True
     page: int = 1
     page_size: int = 50
+
+class AttachmentResponse(BaseModel):
+    id: int
+    script_id: Optional[int]
+    note_id: Optional[int]
+    filename: str
+    original_filename: str
+    file_path: str
+    file_size: int
+    mime_type: Optional[str]
+    created_at: datetime
