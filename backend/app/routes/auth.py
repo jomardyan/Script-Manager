@@ -3,14 +3,14 @@ Authentication and User Management API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from typing import List, Optional
+from typing import Optional
 import aiosqlite
 import json
 
 from app.db.database import get_db
 from app.services.auth import (
     verify_password, get_password_hash, create_access_token,
-    decode_access_token, check_permissions
+    decode_access_token, validate_password_strength
 )
 
 router = APIRouter()
@@ -122,7 +122,17 @@ async def register_user(
     full_name: Optional[str] = None,
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    """Register a new user"""
+    """
+    Register a new user
+    
+    WARNING: Public self-registration is enabled. For production use,
+    consider disabling this endpoint or implementing invitation-based registration.
+    """
+    # Validate password strength
+    is_valid, error_msg = validate_password_strength(password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+    
     # Check if username exists
     async with db.execute(
         "SELECT id FROM users WHERE username = ?",
@@ -176,6 +186,11 @@ async def change_password(
     db: aiosqlite.Connection = Depends(get_db)
 ):
     """Change current user's password"""
+    # Validate new password strength
+    is_valid, error_msg = validate_password_strength(new_password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+    
     # Verify old password
     async with db.execute(
         "SELECT hashed_password FROM users WHERE id = ?",

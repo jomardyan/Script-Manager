@@ -2,10 +2,25 @@
 Markdown rendering service
 """
 import markdown
-from markdown.extensions.fenced_code import FencedCodeExtension
-from markdown.extensions.tables import TableExtension
-from markdown.extensions.codehilite import CodeHiliteExtension
-from pymdownx import emoji, superfences, tasklist
+import bleach
+from pymdownx import emoji, superfences
+
+
+# Allowed HTML tags and attributes for sanitization
+ALLOWED_TAGS = [
+    'a', 'abbr', 'acronym', 'b', 'blockquote', 'code', 'em', 'i', 'li', 'ol', 'pre',
+    'strong', 'ul', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'span', 'div',
+    'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr', 'img', 'del', 'ins', 'sub', 'sup'
+]
+
+ALLOWED_ATTRIBUTES = {
+    '*': ['class', 'id'],
+    'a': ['href', 'title', 'rel'],
+    'img': ['src', 'alt', 'title', 'width', 'height'],
+    'table': ['align'],
+    'td': ['align', 'colspan', 'rowspan'],
+    'th': ['align', 'colspan', 'rowspan'],
+}
 
 
 def render_markdown(content: str, safe: bool = True) -> str:
@@ -63,13 +78,16 @@ def render_markdown(content: str, safe: bool = True) -> str:
     
     html = md.convert(content)
     
-    # Basic sanitization if safe mode is on
+    # Sanitize HTML using bleach for production-grade XSS protection
     if safe:
-        # Remove potentially dangerous tags and attributes
-        # This is a basic implementation - consider using bleach for production
-        dangerous_tags = ['<script', '<iframe', '<object', '<embed']
-        for tag in dangerous_tags:
-            html = html.replace(tag, '&lt;' + tag[1:])
+        html = bleach.clean(
+            html,
+            tags=ALLOWED_TAGS,
+            attributes=ALLOWED_ATTRIBUTES,
+            strip=True
+        )
+        # Also linkify URLs
+        html = bleach.linkify(html)
     
     return html
 

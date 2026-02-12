@@ -4,7 +4,6 @@ Scripts API endpoints
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from datetime import datetime
-import json
 import os
 import aiosqlite
 
@@ -684,6 +683,7 @@ async def import_scripts(
                                     (existing_id, tag_id)
                                 )
                             except aiosqlite.IntegrityError:
+                                # Tag already exists for this script, skip
                                 pass
             
             # Handle status
@@ -709,9 +709,10 @@ async def import_scripts(
                 for note_data in script_data['notes']:
                     content = note_data.get('content')
                     if content:
+                        is_markdown = 1 if note_data.get('is_markdown') else 0
                         await db.execute(
-                            "INSERT INTO script_notes (script_id, content) VALUES (?, ?)",
-                            (existing_id, content)
+                            "INSERT INTO script_notes (script_id, content, is_markdown) VALUES (?, ?, ?)",
+                            (existing_id, content, is_markdown)
                         )
             
             updated_count += 1

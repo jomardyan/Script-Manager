@@ -75,12 +75,28 @@ class ScriptFileHandler(FileSystemEventHandler):
     
     def _schedule_file_update(self, file_path: str, change_type: str):
         """Schedule a file to be updated in the database"""
-        # Use asyncio to run the async update
-        asyncio.create_task(self._update_file(file_path, change_type))
+        # Run database operation in a separate thread since watchdog runs in its own thread
+        import threading
+        thread = threading.Thread(target=self._sync_update_file, args=(file_path, change_type))
+        thread.daemon = True
+        thread.start()
     
     def _schedule_file_deletion(self, file_path: str):
         """Schedule a file to be marked as missing"""
-        asyncio.create_task(self._mark_file_missing(file_path))
+        import threading
+        thread = threading.Thread(target=self._sync_mark_file_missing, args=(file_path,))
+        thread.daemon = True
+        thread.start()
+    
+    def _sync_update_file(self, file_path: str, change_type: str):
+        """Synchronous wrapper for file update"""
+        import asyncio
+        asyncio.run(self._update_file(file_path, change_type))
+    
+    def _sync_mark_file_missing(self, file_path: str):
+        """Synchronous wrapper for marking file missing"""
+        import asyncio
+        asyncio.run(self._mark_file_missing(file_path))
     
     async def _update_file(self, file_path: str, change_type: str):
         """Update file in database"""

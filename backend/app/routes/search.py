@@ -3,7 +3,6 @@ Search API endpoints
 """
 from fastapi import APIRouter, Depends, Query
 from typing import Optional, List
-from datetime import datetime
 import aiosqlite
 
 from app.db.database import get_db

@@ -3,7 +3,7 @@ Similarity Detection service
 Uses difflib for fuzzy matching to find similar scripts
 """
 import difflib
-from typing import List, Dict, Tuple
+from typing import List, Dict
 import aiosqlite
 
 
@@ -56,17 +56,22 @@ async def find_similar_scripts(
     """
     # Get the target script's content
     async with db.execute(
-        "SELECT path, name, language, size FROM scripts WHERE id = ?",
+        "SELECT path, name, language, size, hash FROM scripts WHERE id = ?",
         (script_id,)
     ) as cursor:
         target = await cursor.fetchone()
         if not target:
             return []
         
-        target_path, target_name, target_language, target_size = target
+        target_path, target_name, target_language, target_size, target_hash = target
     
     # Read target file content
     try:
+        # Check file size first (limit to 1MB for similarity comparison)
+        import os
+        if os.path.getsize(target_path) > 1024 * 1024:
+            return []
+        
         with open(target_path, 'r', encoding='utf-8', errors='ignore') as f:
             target_content = f.read()
     except Exception:
@@ -102,11 +107,16 @@ async def find_similar_scripts(
         candidate_id, candidate_path, candidate_name, candidate_size, candidate_hash = candidate
         
         # Skip exact duplicates (same hash)
-        if candidate_hash and candidate_hash == target.get('hash'):
+        if candidate_hash and target_hash and candidate_hash == target_hash:
             continue
         
         # Read candidate content
         try:
+            # Check file size first (limit to 1MB)
+            import os
+            if os.path.getsize(candidate_path) > 1024 * 1024:
+                continue
+            
             with open(candidate_path, 'r', encoding='utf-8', errors='ignore') as f:
                 candidate_content = f.read()
         except Exception:

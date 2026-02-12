@@ -68,7 +68,7 @@ async def update_note(
 ):
     """Update an existing note"""
     async with db.execute(
-        "SELECT script_id, content FROM script_notes WHERE id = ?",
+        "SELECT script_id, content, is_markdown FROM script_notes WHERE id = ?",
         (note_id,)
     ) as cursor:
         note_row = await cursor.fetchone()
@@ -78,8 +78,8 @@ async def update_note(
         old_content = note_row[1]
     
     await db.execute(
-        "UPDATE script_notes SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (note.content, note_id)
+        "UPDATE script_notes SET content = ?, is_markdown = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (note.content, note.is_markdown, note_id)
     )
     
     # Log the change

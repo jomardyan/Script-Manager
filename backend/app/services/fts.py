@@ -2,7 +2,7 @@
 Full-Text Search (FTS5) service
 """
 import aiosqlite
-from typing import List, Dict
+from typing import Dict
 
 
 async def index_script_content(db: aiosqlite.Connection, script_id: int, name: str, path: str, content: str = "", notes: str = ""):
@@ -77,8 +77,11 @@ async def search_fts(
     if search_notes:
         search_cols.append("notes")
     
-    # Build FTS query - escape special characters
-    fts_query = query.replace('"', '""')
+    # Build FTS query - sanitize for FTS5 syntax
+    # Wrap query in quotes to treat as phrase and escape special chars
+    fts_query = query.replace('"', '""')  # Escape double quotes
+    # Wrap in quotes for phrase matching, which prevents FTS5 syntax injection
+    fts_query = f'"{fts_query}"'
     
     # Count total results
     count_query = f"""
@@ -196,6 +199,8 @@ async def rebuild_fts_index(db: aiosqlite.Connection, root_id: int = None):
                     with open(path, 'r', encoding='utf-8', errors='ignore') as f:
                         content = f.read(100000)  # Limit to first 100KB
         except Exception:
+            # Intentionally ignore any errors while reading file content;
+            # the script will still be indexed using metadata and notes only.
             pass
         
         # Index in FTS
