@@ -12,6 +12,28 @@ A web application for managing large collections of script files. Index, search,
 - **Bulk Operations**: Apply changes to multiple scripts at once
 - **Audit Trail**: Track changes to metadata and script status
 
+## Screenshots
+
+### Dashboard
+
+![Dashboard](./docs/screenshots/dashboard.png)
+
+### Folder Roots
+
+![Folder Roots](./docs/screenshots/folder-roots.png)
+
+### Scripts
+
+![Scripts](./docs/screenshots/scripts.png)
+
+### Tags
+
+![Tags](./docs/screenshots/tags.png)
+
+### Advanced Search
+
+![Advanced Search](./docs/screenshots/search.png)
+
 ## Supported Script Types
 
 - Python (.py)

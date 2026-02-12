@@ -107,6 +107,28 @@ The **Dashboard** shows:
 - Scripts grouped by language
 - Recent folder roots and scan status
 
+### Screenshots
+
+#### Dashboard
+
+![Dashboard](./screenshots/dashboard.png)
+
+#### Folder Roots
+
+![Folder Roots](./screenshots/folder-roots.png)
+
+#### Scripts
+
+![Scripts](./screenshots/scripts.png)
+
+#### Tags
+
+![Tags](./screenshots/tags.png)
+
+#### Advanced Search
+
+![Advanced Search](./screenshots/search.png)
+
 ## Tips and Best Practices
 
 ### Organizing Scripts
