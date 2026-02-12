@@ -66,7 +66,7 @@ A web application for managing large collections of script files. Index, search,
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/jomardyan/Script-Manager
 cd Script-Manager
 
 # Start the application
