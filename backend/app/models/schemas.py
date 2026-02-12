@@ -115,3 +115,25 @@ class PaginatedResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+class FolderResponse(BaseModel):
+    id: int
+    root_id: int
+    path: str
+    parent_id: Optional[int]
+    note: Optional[str]
+    created_at: datetime
+
+class FolderNoteUpdate(BaseModel):
+    note: str
+
+class BulkTagRequest(BaseModel):
+    script_ids: List[int]
+    tag_ids: List[int]
+
+class BulkStatusRequest(BaseModel):
+    script_ids: List[int]
+    status: Optional[str] = None
+    classification: Optional[str] = None
+    owner: Optional[str] = None
+    environment: Optional[str] = None
