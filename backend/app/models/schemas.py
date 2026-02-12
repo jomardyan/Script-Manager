@@ -1,0 +1,117 @@
+"""
+Pydantic models for API request/response
+"""
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from datetime import datetime
+
+class FolderRootCreate(BaseModel):
+    path: str
+    name: str
+    recursive: bool = True
+    include_patterns: Optional[str] = None
+    exclude_patterns: Optional[str] = None
+    follow_symlinks: bool = False
+    max_file_size: int = 10485760  # 10MB
+
+class FolderRootResponse(BaseModel):
+    id: int
+    path: str
+    name: str
+    recursive: bool
+    include_patterns: Optional[str]
+    exclude_patterns: Optional[str]
+    follow_symlinks: bool
+    max_file_size: int
+    last_scan_time: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+
+class ScriptResponse(BaseModel):
+    id: int
+    root_id: int
+    folder_id: Optional[int]
+    path: str
+    name: str
+    extension: Optional[str]
+    language: Optional[str]
+    size: Optional[int]
+    mtime: Optional[datetime]
+    hash: Optional[str]
+    line_count: Optional[int]
+    missing_flag: bool
+    created_at: datetime
+    updated_at: datetime
+    tags: List[str] = []
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+class ScriptListResponse(BaseModel):
+    id: int
+    name: str
+    path: str
+    extension: Optional[str]
+    language: Optional[str]
+    size: Optional[int]
+    mtime: Optional[datetime]
+    status: Optional[str]
+    tags: List[str] = []
+
+class TagCreate(BaseModel):
+    name: str
+    group_name: Optional[str] = None
+    color: Optional[str] = None
+
+class TagResponse(BaseModel):
+    id: int
+    name: str
+    group_name: Optional[str]
+    color: Optional[str]
+    created_at: datetime
+
+class NoteCreate(BaseModel):
+    content: str
+
+class NoteResponse(BaseModel):
+    id: int
+    script_id: int
+    content: str
+    created_at: datetime
+    updated_at: datetime
+
+class StatusUpdate(BaseModel):
+    status: Optional[str] = None
+    classification: Optional[str] = None
+    owner: Optional[str] = None
+    environment: Optional[str] = None
+    deprecated_date: Optional[datetime] = None
+    migration_note: Optional[str] = None
+
+class ScanRequest(BaseModel):
+    full_scan: bool = False
+
+class ScanResponse(BaseModel):
+    scan_id: int
+    status: str
+    new_count: int
+    updated_count: int
+    deleted_count: int
+    error_count: int
+    started_at: datetime
+    ended_at: Optional[datetime]
+
+class SearchRequest(BaseModel):
+    query: Optional[str] = None
+    languages: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+    status: Optional[List[str]] = None
+    root_ids: Optional[List[int]] = None
+    page: int = 1
+    page_size: int = 50
+
+class PaginatedResponse(BaseModel):
+    items: List[ScriptListResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
