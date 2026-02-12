@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+*.db
+*.db-journal
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+.pnp
+.pnp.js
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+/backend/dist/
+/frontend/build/
+/frontend/dist/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+/tmp/
+*.tmp
