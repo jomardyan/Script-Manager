@@ -55,18 +55,16 @@ The web interface will be available at http://localhost:3000
 ## Architecture
 
 - **Backend**: Python with FastAPI
-- **Database**: SQLite with FTS5 for full-text search
+- **Database**: SQLite with indexes for fast queries
 - **Frontend**: React with modern UI components
 - **API**: RESTful API with JSON responses
 
 ## Configuration
 
-Configuration options can be set via environment variables or a config file:
+Configuration options can be set via environment variables:
 
 - `DATABASE_PATH`: Path to SQLite database (default: `./data/scripts.db`)
 - `API_PORT`: Backend API port (default: `8000`)
-- `MAX_FILE_SIZE`: Maximum file size to index in MB (default: `10`)
-- `ENABLE_CONTENT_INDEXING`: Enable full-text content search (default: `false`)
 
 ## Documentation
 
