@@ -33,6 +33,7 @@ async def init_db():
                 follow_symlinks BOOLEAN DEFAULT 0,
                 max_file_size INTEGER DEFAULT 10485760,
                 enable_content_indexing BOOLEAN DEFAULT 0,
+                enable_watch_mode BOOLEAN DEFAULT 0,
                 last_scan_time TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

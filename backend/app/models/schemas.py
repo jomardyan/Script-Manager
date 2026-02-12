@@ -14,6 +14,7 @@ class FolderRootCreate(BaseModel):
     follow_symlinks: bool = False
     max_file_size: int = 10485760  # 10MB
     enable_content_indexing: bool = False
+    enable_watch_mode: bool = False
 
 class FolderRootResponse(BaseModel):
     id: int
@@ -25,6 +26,7 @@ class FolderRootResponse(BaseModel):
     follow_symlinks: bool
     max_file_size: int
     enable_content_indexing: bool
+    enable_watch_mode: bool
     last_scan_time: Optional[datetime]
     created_at: datetime
     updated_at: datetime
