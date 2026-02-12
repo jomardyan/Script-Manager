@@ -8,3 +8,5 @@ python-dotenv==1.0.0
 watchdog==3.0.0
 markdown==3.5.1
 pymdown-extensions==10.5
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
