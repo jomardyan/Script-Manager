@@ -137,3 +137,18 @@ class BulkStatusRequest(BaseModel):
     classification: Optional[str] = None
     owner: Optional[str] = None
     environment: Optional[str] = None
+
+class SavedSearchCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    query_params: dict
+    is_pinned: bool = False
+
+class SavedSearchResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    query_params: dict
+    is_pinned: bool
+    created_at: datetime
+    updated_at: datetime

@@ -167,6 +167,19 @@ async def init_db():
             )
         """)
         
+        # Create saved_searches table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS saved_searches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                query_params TEXT NOT NULL,
+                is_pinned BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
         # Create indexes for performance
         await db.execute("CREATE INDEX IF NOT EXISTS idx_scripts_name ON scripts(name)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_scripts_extension ON scripts(extension)")

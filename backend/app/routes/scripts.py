@@ -698,3 +698,81 @@ async def import_scripts(
         "updated": updated_count,
         "skipped": skipped_count
     }
+
+@router.get("/{script_id}/fields")
+async def get_script_custom_fields(script_id: int, db: aiosqlite.Connection = Depends(get_db)):
+    """Get all custom fields for a script"""
+    async with db.execute("SELECT id FROM scripts WHERE id = ?", (script_id,)) as cursor:
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Script not found")
+    
+    async with db.execute(
+        "SELECT key, value FROM script_fields WHERE script_id = ?",
+        (script_id,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        return {row[0]: row[1] for row in rows}
+
+@router.put("/{script_id}/fields/{key}")
+async def set_script_custom_field(
+    script_id: int,
+    key: str,
+    value: dict,
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    """Set a custom field for a script"""
+    async with db.execute("SELECT id FROM scripts WHERE id = ?", (script_id,)) as cursor:
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Script not found")
+    
+    field_value = value.get('value', '')
+    
+    # Insert or replace the field
+    await db.execute(
+        """
+        INSERT INTO script_fields (script_id, key, value)
+        VALUES (?, ?, ?)
+        ON CONFLICT(script_id, key) DO UPDATE SET value = excluded.value
+        """,
+        (script_id, key, field_value)
+    )
+    
+    # Log the change
+    await db.execute(
+        """
+        INSERT INTO change_log (script_id, change_type, new_value)
+        VALUES (?, 'custom_field_updated', ?)
+        """,
+        (script_id, f"{key}={field_value}")
+    )
+    
+    await db.commit()
+    return {"message": "Custom field updated successfully"}
+
+@router.delete("/{script_id}/fields/{key}")
+async def delete_script_custom_field(
+    script_id: int,
+    key: str,
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    """Delete a custom field from a script"""
+    async with db.execute("SELECT id FROM scripts WHERE id = ?", (script_id,)) as cursor:
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Script not found")
+    
+    await db.execute(
+        "DELETE FROM script_fields WHERE script_id = ? AND key = ?",
+        (script_id, key)
+    )
+    
+    # Log the change
+    await db.execute(
+        """
+        INSERT INTO change_log (script_id, change_type, old_value)
+        VALUES (?, 'custom_field_deleted', ?)
+        """,
+        (script_id, key)
+    )
+    
+    await db.commit()
+    return {"message": "Custom field deleted successfully"}

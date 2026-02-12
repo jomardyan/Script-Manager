@@ -6,7 +6,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import init_db
-from app.routes import folder_roots, scripts, tags, notes, search, folders
+from app.routes import folder_roots, scripts, tags, notes, search, folders, saved_searches
 
 app = FastAPI(
     title="Script Manager API",
@@ -30,6 +30,7 @@ app.include_router(tags.router, prefix="/api/tags", tags=["Tags"])
 app.include_router(notes.router, prefix="/api/notes", tags=["Notes"])
 app.include_router(search.router, prefix="/api/search", tags=["Search"])
 app.include_router(folders.router, prefix="/api/folders", tags=["Folders"])
+app.include_router(saved_searches.router, prefix="/api/saved-searches", tags=["Saved Searches"])
 
 @app.on_event("startup")
 async def startup_event():
