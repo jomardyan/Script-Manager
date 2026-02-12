@@ -4,6 +4,8 @@ Scripts API endpoints
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from datetime import datetime
+import json
+import os
 import aiosqlite
 
 from app.db.database import get_db
@@ -367,16 +369,37 @@ async def get_script_history(script_id: int, db: aiosqlite.Connection = Depends(
 @router.get("/{script_id}/content")
 async def get_script_content(script_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Get the actual file content of a script"""
-    # Get script path
-    async with db.execute("SELECT path FROM scripts WHERE id = ?", (script_id,)) as cursor:
+    # Get script path and validate it exists in database
+    async with db.execute(
+        "SELECT path, root_id FROM scripts WHERE id = ?",
+        (script_id,)
+    ) as cursor:
         row = await cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Script not found")
         file_path = row[0]
+        root_id = row[1]
+    
+    # Get root path to validate the script is within a registered folder root
+    async with db.execute(
+        "SELECT path FROM folder_roots WHERE id = ?",
+        (root_id,)
+    ) as cursor:
+        root_row = await cursor.fetchone()
+        if not root_row:
+            raise HTTPException(status_code=404, detail="Folder root not found")
+        root_path = root_row[0]
+    
+    # Validate that the file path starts with the root path (security check)
+    file_path_abs = os.path.abspath(file_path)
+    root_path_abs = os.path.abspath(root_path)
+    
+    if not file_path_abs.startswith(root_path_abs):
+        raise HTTPException(status_code=403, detail="Access denied: file is outside registered folder root")
     
     # Read file content
     try:
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(file_path_abs, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
         return {"content": content, "path": file_path}
     except FileNotFoundError:
@@ -517,15 +540,21 @@ async def export_scripts(
     db: aiosqlite.Connection = Depends(get_db)
 ):
     """Export script metadata as JSON"""
-    import json
-    
     # Build query based on whether specific script IDs are provided
     if script_ids:
         placeholders = ','.join('?' * len(script_ids))
-        query = f"SELECT * FROM scripts WHERE id IN ({placeholders})"
+        query = f"""
+            SELECT id, root_id, folder_id, path, name, extension, language, 
+                   size, mtime, hash, line_count, missing_flag, created_at, updated_at
+            FROM scripts WHERE id IN ({placeholders})
+        """
         params = script_ids
     else:
-        query = "SELECT * FROM scripts WHERE missing_flag = 0"
+        query = """
+            SELECT id, root_id, folder_id, path, name, extension, language,
+                   size, mtime, hash, line_count, missing_flag, created_at, updated_at
+            FROM scripts WHERE missing_flag = 0
+        """
         params = ()
     
     exported_scripts = []
