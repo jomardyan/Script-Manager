@@ -6,9 +6,15 @@ import ScriptDetail from './pages/ScriptDetail';
 import Tags from './pages/Tags';
 import Search from './pages/Search';
 
+/**
+ * Sidebar navigation with active route highlighting.
+ */
 function Navigation() {
   const location = useLocation();
   
+  /**
+   * Return the active class name for the current route.
+   */
   const isActive = (path) => {
     return location.pathname === path ? 'active' : '';
   };
@@ -36,6 +42,9 @@ function Navigation() {
   );
 }
 
+/**
+ * Root application component with routing layout.
+ */
 function App() {
   return (
     <Router>

@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { scriptsApi, notesApi, tagsApi } from '../services/api';
 
+/**
+ * Display details, notes, and tags for a single script.
+ */
 function ScriptDetail() {
   const { id } = useParams();
   const [script, setScript] = useState(null);
@@ -21,6 +24,9 @@ function ScriptDetail() {
     loadData();
   }, [id]);
 
+  /**
+   * Load script details, notes, and available tags.
+   */
   const loadData = async () => {
     try {
       setLoading(true);
@@ -45,6 +51,9 @@ function ScriptDetail() {
     }
   };
 
+  /**
+   * Persist status updates for the current script.
+   */
   const handleStatusUpdate = async (e) => {
     e.preventDefault();
     try {
@@ -56,6 +65,9 @@ function ScriptDetail() {
     }
   };
 
+  /**
+   * Add a new note to the script.
+   */
   const handleAddNote = async (e) => {
     e.preventDefault();
     if (!noteContent.trim()) return;
@@ -68,6 +80,9 @@ function ScriptDetail() {
     }
   };
 
+  /**
+   * Assign a tag to the script.
+   */
   const handleAddTag = async (tagId) => {
     try {
       await scriptsApi.addTag(id, tagId);
@@ -77,6 +92,9 @@ function ScriptDetail() {
     }
   };
 
+  /**
+   * Remove a tag assignment from the script.
+   */
   const handleRemoveTag = async (tagId) => {
     try {
       const tag = allTags.find(t => t.name === tagId);

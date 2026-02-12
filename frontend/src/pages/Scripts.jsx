@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { scriptsApi } from '../services/api';
 
+/**
+ * List and filter indexed scripts.
+ */
 function Scripts() {
   const [scripts, setScripts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -18,6 +21,9 @@ function Scripts() {
     loadScripts();
   }, [page, search, filters]);
 
+  /**
+   * Fetch scripts using the current filters and pagination.
+   */
   const loadScripts = async () => {
     try {
       setLoading(true);
@@ -38,12 +44,18 @@ function Scripts() {
     }
   };
 
+  /**
+   * Apply the search term and reload results.
+   */
   const handleSearch = (e) => {
     e.preventDefault();
     setPage(1);
     loadScripts();
   };
 
+  /**
+   * Resolve the status badge class name.
+   */
   const getStatusClass = (status) => {
     if (!status) return 'status-badge';
     return `status-badge status-${status.toLowerCase()}`;

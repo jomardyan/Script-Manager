@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { tagsApi } from '../services/api';
 
+/**
+ * Manage script tags and tag groups.
+ */
 function Tags() {
   const [tags, setTags] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -16,6 +19,9 @@ function Tags() {
     loadTags();
   }, []);
 
+  /**
+   * Fetch tags from the API.
+   */
   const loadTags = async () => {
     try {
       setLoading(true);
@@ -28,6 +34,9 @@ function Tags() {
     }
   };
 
+  /**
+   * Submit the create tag form.
+   */
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
@@ -40,6 +49,9 @@ function Tags() {
     }
   };
 
+  /**
+   * Delete a tag by id.
+   */
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to delete this tag?')) {
       try {

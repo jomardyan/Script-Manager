@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { searchApi, folderRootsApi } from '../services/api';
 
+/**
+ * Dashboard overview showing aggregate stats and folder roots.
+ */
 function Dashboard() {
   const [stats, setStats] = useState(null);
   const [roots, setRoots] = useState([]);
@@ -11,6 +14,9 @@ function Dashboard() {
     loadData();
   }, []);
 
+  /**
+   * Load statistics and folder roots for the dashboard.
+   */
   const loadData = async () => {
     try {
       setLoading(true);
