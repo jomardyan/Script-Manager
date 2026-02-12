@@ -1,9 +1,6 @@
 import { useState, useEffect } from 'react';
 import { folderRootsApi } from '../services/api';
 
-/**
- * Manage folder roots that are scanned for scripts.
- */
 function FolderRoots() {
   const [roots, setRoots] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,9 +21,6 @@ function FolderRoots() {
     loadRoots();
   }, []);
 
-  /**
-   * Fetch folder roots from the API.
-   */
   const loadRoots = async () => {
     try {
       setLoading(true);
@@ -39,9 +33,6 @@ function FolderRoots() {
     }
   };
 
-  /**
-   * Submit the new folder root form.
-   */
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
@@ -62,9 +53,6 @@ function FolderRoots() {
     }
   };
 
-  /**
-   * Delete a folder root by id.
-   */
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to delete this folder root? All associated scripts will be removed.')) {
       try {
@@ -76,9 +64,6 @@ function FolderRoots() {
     }
   };
 
-  /**
-   * Trigger a scan for the selected root.
-   */
   const handleScan = async (id) => {
     try {
       setScanning(prev => ({ ...prev, [id]: true }));

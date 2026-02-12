@@ -18,7 +18,6 @@ class ScriptFileHandler(FileSystemEventHandler):
     
     def __init__(self, root_id: int, root_path: str, db_path: str, recursive: bool, 
                  include_patterns: str, exclude_patterns: str, max_file_size: int):
-        """Initialize file handler with root configuration and filters."""
         self.root_id = root_id
         self.root_path = root_path
         self.db_path = db_path
@@ -186,7 +185,6 @@ class WatchManager:
     """Manages filesystem watchers for folder roots"""
     
     def __init__(self, db_path: str):
-        """Initialize the watch manager with a database path."""
         self.db_path = db_path
         self.observers: Dict[int, Observer] = {}
     

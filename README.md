@@ -1,17 +1,16 @@
 # Script Manager
 
-A web application for managing large collections of script files. Index, search, tag, and organize scripts across multiple directories while keeping files on disk as the source of truth.
+A web application for managing large collections of script files. Index, search, tag, and organize your Python, PowerShell, Bash, SQL, and other script files across multiple directories.
 
 ## Features
 
-- **Script Indexing**: Multi-root scans with include/exclude patterns, incremental updates, and optional watch mode
-- **Metadata Management**: Notes, tags, status, classification, owner, environment, and custom fields
-- **Fast Search**: Name/path search, filters, saved searches, and optional FTS5 full-text search
-- **Lifecycle Tracking**: Draft → active → deprecated → archived with audit history
-- **Duplicate & Similarity Detection**: Content hashing and fuzzy matching for related scripts
-- **Markdown Notes & Attachments**: Rendered notes with optional file uploads
-- **Bulk Operations & Import/Export**: Apply tags/status in bulk and export/import metadata
-- **Responsive UI + API**: React frontend with FastAPI REST endpoints
+- **Script Indexing**: Recursively scan and index scripts from multiple folder roots
+- **Metadata Management**: Add notes, tags, status, and classifications to scripts
+- **Fast Search**: Search by filename, path, content, tags, and metadata
+- **Lifecycle Tracking**: Manage script status (draft, active, deprecated, archived)
+- **Duplicate Detection**: Find identical scripts across different locations
+- **Bulk Operations**: Apply changes to multiple scripts at once
+- **Audit Trail**: Track changes to metadata and script status
 
 ## Supported Script Types
 
@@ -20,19 +19,10 @@ A web application for managing large collections of script files. Index, search,
 - Bash (.sh)
 - Batch (.bat, .cmd)
 - SQL (.sql)
-- JavaScript/TypeScript (.js, .ts)
+- JavaScript (.js)
 - YAML (.yml, .yaml)
 - JSON (.json)
 - Terraform (.tf)
-- Ruby (.rb)
-- Perl (.pl)
-- PHP (.php)
-- Go (.go)
-- Rust (.rs)
-- Java (.java)
-- C# (.cs)
-- C/C++ (.c, .cpp)
-- R (.r)
 
 ## Quick Start
 
@@ -83,23 +73,10 @@ The web interface will be available at http://localhost:3000
 
 ## Architecture
 
-- **Backend**: FastAPI with async services for scanning, search, and metadata
-- **Database**: SQLite with indexes and optional FTS5 full-text search
-- **Frontend**: React + Vite single-page application
-- **File System**: Script files remain on disk; metadata lives in SQLite
-
-See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the full developer architecture overview.
-
-## Project Structure
-
-```
-Script-Manager/
-├── backend/              # FastAPI backend and SQLite integration
-├── frontend/             # React UI
-├── docs/                 # Developer and user documentation
-├── start.sh              # Linux/Mac startup script
-└── start.bat             # Windows startup script
-```
+- **Backend**: Python with FastAPI
+- **Database**: SQLite with indexes for fast queries
+- **Frontend**: React with modern UI components
+- **API**: RESTful API with JSON responses
 
 ## Configuration
 
@@ -110,9 +87,9 @@ Configuration options can be set via environment variables:
 
 ## Documentation
 
-- [Architecture Guide](./docs/ARCHITECTURE.md)
 - [API Documentation](./docs/API.md)
 - [User Guide](./docs/USER_GUIDE.md)
+- [Development Guide](./docs/DEVELOPMENT.md)
 
 ## License
 

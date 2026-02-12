@@ -2,9 +2,6 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { searchApi, tagsApi, folderRootsApi } from '../services/api';
 
-/**
- * Advanced search page for script queries.
- */
 function Search() {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -27,9 +24,6 @@ function Search() {
     loadFilters();
   }, []);
 
-  /**
-   * Load available tags and folder roots for filters.
-   */
   const loadFilters = async () => {
     try {
       const [tagsRes, rootsRes] = await Promise.all([
@@ -43,9 +37,6 @@ function Search() {
     }
   };
 
-  /**
-   * Execute the search request with current filters.
-   */
   const handleSearch = async (e) => {
     if (e) e.preventDefault();
     try {
@@ -68,9 +59,6 @@ function Search() {
     }
   };
 
-  /**
-   * Toggle a value in a filter array.
-   */
   const toggleArrayValue = (array, value) => {
     if (array.includes(value)) {
       return array.filter(v => v !== value);

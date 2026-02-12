@@ -18,12 +18,7 @@ jobs:
         with:
           node-version: "18"
       - name: Install frontend dependencies
-        run: |
-          if [ -f frontend/package-lock.json ]; then
-            npm ci --prefix frontend
-          else
-            npm install --prefix frontend
-          fi
+        run: npm ci --prefix frontend
       - name: Build frontend
         run: npm --prefix frontend run build
       - name: Set up Python
@@ -33,7 +28,7 @@ jobs:
       - name: Install backend dependencies
         run: |
           if [ -f backend/requirements.txt ]; then
-            pip install -r backend/requirements.txt
+            python -m pip install -r backend/requirements.txt
           else
             echo "No backend requirements found."
           fi
@@ -42,7 +37,7 @@ jobs:
       - name: Run backend tests if present
         run: |
           if [ -d backend/tests ]; then
-            pip install pytest
+            python -m pip install pytest
             python -m pytest backend/tests
           else
             echo "No backend tests found."

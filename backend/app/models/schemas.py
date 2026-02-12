@@ -6,7 +6,6 @@ from typing import Optional, List
 from datetime import datetime
 
 class FolderRootCreate(BaseModel):
-    """Payload for creating a folder root."""
     path: str
     name: str
     recursive: bool = True
@@ -18,7 +17,6 @@ class FolderRootCreate(BaseModel):
     enable_watch_mode: bool = False
 
 class FolderRootResponse(BaseModel):
-    """Folder root response model."""
     id: int
     path: str
     name: str
@@ -34,7 +32,6 @@ class FolderRootResponse(BaseModel):
     updated_at: datetime
 
 class ScriptResponse(BaseModel):
-    """Detailed script metadata response."""
     id: int
     root_id: int
     folder_id: Optional[int]
@@ -54,7 +51,6 @@ class ScriptResponse(BaseModel):
     notes: Optional[str] = None
 
 class ScriptListResponse(BaseModel):
-    """Script list item response."""
     id: int
     name: str
     path: str
@@ -66,13 +62,11 @@ class ScriptListResponse(BaseModel):
     tags: List[str] = []
 
 class TagCreate(BaseModel):
-    """Payload for creating a tag."""
     name: str
     group_name: Optional[str] = None
     color: Optional[str] = None
 
 class TagResponse(BaseModel):
-    """Tag response model."""
     id: int
     name: str
     group_name: Optional[str]
@@ -80,12 +74,10 @@ class TagResponse(BaseModel):
     created_at: datetime
 
 class NoteCreate(BaseModel):
-    """Payload for creating a note."""
     content: str
     is_markdown: bool = False
 
 class NoteResponse(BaseModel):
-    """Note response model."""
     id: int
     script_id: int
     content: str
@@ -94,7 +86,6 @@ class NoteResponse(BaseModel):
     updated_at: datetime
 
 class StatusUpdate(BaseModel):
-    """Payload for updating script status details."""
     status: Optional[str] = None
     classification: Optional[str] = None
     owner: Optional[str] = None
@@ -103,11 +94,9 @@ class StatusUpdate(BaseModel):
     migration_note: Optional[str] = None
 
 class ScanRequest(BaseModel):
-    """Payload for triggering a scan."""
     full_scan: bool = False
 
 class ScanResponse(BaseModel):
-    """Scan status response."""
     scan_id: int
     status: str
     new_count: int
@@ -118,7 +107,6 @@ class ScanResponse(BaseModel):
     ended_at: Optional[datetime]
 
 class SearchRequest(BaseModel):
-    """Payload for advanced search queries."""
     query: Optional[str] = None
     languages: Optional[List[str]] = None
     tags: Optional[List[str]] = None
@@ -135,7 +123,6 @@ class SearchRequest(BaseModel):
     page_size: int = 50
 
 class PaginatedResponse(BaseModel):
-    """Paginated scripts response."""
     items: List[ScriptListResponse]
     total: int
     page: int
@@ -143,7 +130,6 @@ class PaginatedResponse(BaseModel):
     total_pages: int
 
 class FolderResponse(BaseModel):
-    """Folder metadata response."""
     id: int
     root_id: int
     path: str
@@ -152,16 +138,13 @@ class FolderResponse(BaseModel):
     created_at: datetime
 
 class FolderNoteUpdate(BaseModel):
-    """Payload for updating a folder note."""
     note: str
 
 class BulkTagRequest(BaseModel):
-    """Bulk tag assignment request."""
     script_ids: List[int]
     tag_ids: List[int]
 
 class BulkStatusRequest(BaseModel):
-    """Bulk status update request."""
     script_ids: List[int]
     status: Optional[str] = None
     classification: Optional[str] = None
@@ -169,14 +152,12 @@ class BulkStatusRequest(BaseModel):
     environment: Optional[str] = None
 
 class SavedSearchCreate(BaseModel):
-    """Payload for creating a saved search."""
     name: str
     description: Optional[str] = None
     query_params: dict
     is_pinned: bool = False
 
 class SavedSearchResponse(BaseModel):
-    """Saved search response model."""
     id: int
     name: str
     description: Optional[str]
@@ -186,7 +167,6 @@ class SavedSearchResponse(BaseModel):
     updated_at: datetime
 
 class FTSSearchRequest(BaseModel):
-    """Full-text search request payload."""
     query: str
     search_content: bool = True
     search_notes: bool = True
@@ -194,7 +174,6 @@ class FTSSearchRequest(BaseModel):
     page_size: int = 50
 
 class AttachmentResponse(BaseModel):
-    """Attachment metadata response."""
     id: int
     script_id: Optional[int]
     note_id: Optional[int]
