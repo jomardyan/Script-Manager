@@ -73,3 +73,26 @@ async def delete_folder_note(folder_id: int, db: aiosqlite.Connection = Depends(
     await db.commit()
     
     return {"message": "Folder note deleted successfully"}
+
+@router.get("/tree/{root_id}")
+async def get_folder_tree(root_id: int, db: aiosqlite.Connection = Depends(get_db)):
+    """Get folder tree for a specific root in hierarchical structure"""
+    # Get all folders for this root
+    async with db.execute(
+        "SELECT id, path, parent_id, note FROM folders WHERE root_id = ? ORDER BY path",
+        (root_id,)
+    ) as cursor:
+        rows = await cursor.fetchall()
+        folders = [dict(row) for row in rows]
+    
+    # Build tree structure
+    folder_map = {f['id']: {**f, 'children': []} for f in folders}
+    tree = []
+    
+    for folder in folders:
+        if folder['parent_id'] is None:
+            tree.append(folder_map[folder['id']])
+        elif folder['parent_id'] in folder_map:
+            folder_map[folder['parent_id']]['children'].append(folder_map[folder['id']])
+    
+    return tree

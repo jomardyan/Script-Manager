@@ -3,6 +3,7 @@ Search API endpoints
 """
 from fastapi import APIRouter, Depends, Query
 from typing import Optional, List
+from datetime import datetime
 import aiosqlite
 
 from app.db.database import get_db
@@ -50,6 +51,39 @@ async def search_scripts(
             tag_conditions.append("t.name = ?")
             params.append(tag)
         conditions.append(f"({' OR '.join(tag_conditions)})")
+    
+    # Owner filter
+    if search.owner:
+        conditions.append("st.owner = ?")
+        params.append(search.owner)
+    
+    # Environment filter
+    if search.environment:
+        conditions.append("st.environment = ?")
+        params.append(search.environment)
+    
+    # Classification filter
+    if search.classification:
+        conditions.append("st.classification = ?")
+        params.append(search.classification)
+    
+    # Size range filters
+    if search.min_size is not None:
+        conditions.append("s.size >= ?")
+        params.append(search.min_size)
+    
+    if search.max_size is not None:
+        conditions.append("s.size <= ?")
+        params.append(search.max_size)
+    
+    # Date range filters
+    if search.modified_after:
+        conditions.append("s.mtime >= ?")
+        params.append(search.modified_after)
+    
+    if search.modified_before:
+        conditions.append("s.mtime <= ?")
+        params.append(search.modified_before)
     
     where_clause = " AND ".join(conditions)
     

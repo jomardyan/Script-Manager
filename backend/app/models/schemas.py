@@ -106,6 +106,13 @@ class SearchRequest(BaseModel):
     tags: Optional[List[str]] = None
     status: Optional[List[str]] = None
     root_ids: Optional[List[int]] = None
+    owner: Optional[str] = None
+    environment: Optional[str] = None
+    classification: Optional[str] = None
+    min_size: Optional[int] = None
+    max_size: Optional[int] = None
+    modified_after: Optional[datetime] = None
+    modified_before: Optional[datetime] = None
     page: int = 1
     page_size: int = 50
 

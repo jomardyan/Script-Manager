@@ -58,22 +58,33 @@ http://localhost:8000/api
 
 ### Folders
 
-- **GET /api/folders/** - List all folders (NEW)
-- **GET /api/folders/{id}** - Get a specific folder (NEW)
-- **PUT /api/folders/{id}/note** - Update folder note (NEW)
-- **DELETE /api/folders/{id}/note** - Delete folder note (NEW)
+- **GET /api/folders/** - List all folders (with optional root_id filter)
+- **GET /api/folders/{id}** - Get a specific folder
+- **GET /api/folders/tree/{root_id}** - Get folder tree hierarchy (NEW)
+- **PUT /api/folders/{id}/note** - Update folder note
+- **DELETE /api/folders/{id}/note** - Delete folder note
 
 ### Saved Searches
 
-- **GET /api/saved-searches/** - List all saved searches (NEW)
-- **POST /api/saved-searches/** - Create a saved search (NEW)
-- **GET /api/saved-searches/{id}** - Get a specific saved search (NEW)
-- **PUT /api/saved-searches/{id}** - Update a saved search (NEW)
-- **DELETE /api/saved-searches/{id}** - Delete a saved search (NEW)
+- **GET /api/saved-searches/** - List all saved searches
+- **POST /api/saved-searches/** - Create a saved search
+- **GET /api/saved-searches/{id}** - Get a specific saved search
+- **PUT /api/saved-searches/{id}** - Update a saved search
+- **DELETE /api/saved-searches/{id}** - Delete a saved search
 
 ### Search
 
-- **POST /api/search/** - Advanced script search
+- **POST /api/search/** - Advanced script search with filters:
+  - query (name/path)
+  - languages (array)
+  - tags (array)
+  - status (array)
+  - root_ids (array)
+  - owner (string) - NEW
+  - environment (string) - NEW
+  - classification (string) - NEW
+  - min_size / max_size (integers) - NEW
+  - modified_after / modified_before (datetime) - NEW
 - **GET /api/search/stats** - Get statistics
 
 ## Interactive Documentation
