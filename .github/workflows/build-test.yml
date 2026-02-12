@@ -1,0 +1,44 @@
+name: Build and Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Build frontend
+        run: npm --prefix frontend run build
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend dependencies
+        run: |
+          if [ -f backend/requirements.txt ]; then
+            python -m pip install -r backend/requirements.txt
+          else
+            echo "No backend requirements found."
+          fi
+      - name: Backend syntax check
+        run: python -m compileall backend
+      - name: Run backend tests if present
+        run: |
+          if [ -d backend/tests ]; then
+            python -m pip install pytest
+            python -m pytest backend/tests
+          else
+            echo "No backend tests found."
+          fi
