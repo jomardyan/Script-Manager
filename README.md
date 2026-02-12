@@ -26,13 +26,32 @@ A web application for managing large collections of script files. Index, search,
 
 ## Quick Start
 
-### Prerequisites
+### Easy Start (Recommended)
+
+**On Linux/Mac:**
+```bash
+./start.sh
+```
+
+**On Windows:**
+```bash
+start.bat
+```
+
+This will automatically:
+1. Install dependencies if needed
+2. Start both backend and frontend
+3. Open the application in your browser
+
+### Manual Start
+
+#### Prerequisites
 
 - Python 3.8 or higher
 - Node.js 16 or higher
 - npm or yarn
 
-### Backend Setup
+#### Backend Setup
 
 ```bash
 cd backend
@@ -42,12 +61,12 @@ python main.py
 
 The API will be available at http://localhost:8000
 
-### Frontend Setup
+#### Frontend Setup
 
 ```bash
 cd frontend
 npm install
-npm start
+npm run dev
 ```
 
 The web interface will be available at http://localhost:3000
