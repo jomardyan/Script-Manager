@@ -24,10 +24,22 @@ http://localhost:8000/api
 
 - **GET /api/scripts/** - List scripts with pagination and filters
 - **GET /api/scripts/{id}** - Get detailed script information
+- **GET /api/scripts/{id}/content** - Get script file content (NEW)
+- **GET /api/scripts/{id}/history** - Get change history for a script (NEW)
 - **PUT /api/scripts/{id}/status** - Update script status
 - **POST /api/scripts/{id}/tags/{tag_id}** - Add a tag to a script
 - **DELETE /api/scripts/{id}/tags/{tag_id}** - Remove a tag from a script
 - **GET /api/scripts/duplicates/list** - Find duplicate scripts
+- **POST /api/scripts/bulk/tags** - Add tags to multiple scripts (NEW)
+- **POST /api/scripts/bulk/status** - Update status for multiple scripts (NEW)
+- **POST /api/scripts/export** - Export script metadata as JSON (NEW)
+- **POST /api/scripts/import** - Import script metadata (NEW)
+
+### Custom Fields
+
+- **GET /api/scripts/{id}/fields** - Get all custom fields for a script (NEW)
+- **PUT /api/scripts/{id}/fields/{key}** - Set a custom field value (NEW)
+- **DELETE /api/scripts/{id}/fields/{key}** - Delete a custom field (NEW)
 
 ### Tags
 
@@ -43,6 +55,21 @@ http://localhost:8000/api
 - **POST /api/notes/script/{script_id}** - Create a note
 - **PUT /api/notes/{note_id}** - Update a note
 - **DELETE /api/notes/{note_id}** - Delete a note
+
+### Folders
+
+- **GET /api/folders/** - List all folders (NEW)
+- **GET /api/folders/{id}** - Get a specific folder (NEW)
+- **PUT /api/folders/{id}/note** - Update folder note (NEW)
+- **DELETE /api/folders/{id}/note** - Delete folder note (NEW)
+
+### Saved Searches
+
+- **GET /api/saved-searches/** - List all saved searches (NEW)
+- **POST /api/saved-searches/** - Create a saved search (NEW)
+- **GET /api/saved-searches/{id}** - Get a specific saved search (NEW)
+- **PUT /api/saved-searches/{id}** - Update a saved search (NEW)
+- **DELETE /api/saved-searches/{id}** - Delete a saved search (NEW)
 
 ### Search
 
