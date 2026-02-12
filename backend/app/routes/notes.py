@@ -7,6 +7,7 @@ import aiosqlite
 
 from app.db.database import get_db
 from app.models.schemas import NoteCreate, NoteResponse
+from app.services.markdown import render_markdown, extract_markdown_preview
 
 router = APIRouter()
 
@@ -36,8 +37,8 @@ async def create_script_note(
             raise HTTPException(status_code=404, detail="Script not found")
     
     cursor = await db.execute(
-        "INSERT INTO script_notes (script_id, content) VALUES (?, ?)",
-        (script_id, note.content)
+        "INSERT INTO script_notes (script_id, content, is_markdown) VALUES (?, ?, ?)",
+        (script_id, note.content, note.is_markdown)
     )
     note_id = cursor.lastrowid
     
@@ -125,3 +126,53 @@ async def delete_note(note_id: int, db: aiosqlite.Connection = Depends(get_db)):
     
     await db.commit()
     return {"message": "Note deleted successfully"}
+
+@router.get("/{note_id}/render")
+async def render_note(note_id: int, db: aiosqlite.Connection = Depends(get_db)):
+    """Render a markdown note to HTML"""
+    async with db.execute(
+        "SELECT content, is_markdown FROM script_notes WHERE id = ?",
+        (note_id,)
+    ) as cursor:
+        note_row = await cursor.fetchone()
+        if not note_row:
+            raise HTTPException(status_code=404, detail="Note not found")
+        
+        content, is_markdown = note_row
+    
+    if not is_markdown:
+        # Return plain text wrapped in <pre> tag
+        return {
+            "html": f"<pre>{content}</pre>",
+            "is_markdown": False,
+            "preview": content[:200]
+        }
+    
+    # Render markdown
+    html = render_markdown(content, safe=True)
+    preview = extract_markdown_preview(content)
+    
+    return {
+        "html": html,
+        "is_markdown": True,
+        "preview": preview
+    }
+
+@router.post("/preview")
+async def preview_markdown(note: NoteCreate):
+    """Preview markdown rendering without saving"""
+    if not note.is_markdown:
+        return {
+            "html": f"<pre>{note.content}</pre>",
+            "is_markdown": False,
+            "preview": note.content[:200]
+        }
+    
+    html = render_markdown(note.content, safe=True)
+    preview = extract_markdown_preview(note.content)
+    
+    return {
+        "html": html,
+        "is_markdown": True,
+        "preview": preview
+    }

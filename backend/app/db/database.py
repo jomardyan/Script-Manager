@@ -82,6 +82,7 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 script_id INTEGER NOT NULL,
                 content TEXT NOT NULL,
+                is_markdown BOOLEAN DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE

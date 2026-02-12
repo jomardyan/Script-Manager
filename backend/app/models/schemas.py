@@ -75,11 +75,13 @@ class TagResponse(BaseModel):
 
 class NoteCreate(BaseModel):
     content: str
+    is_markdown: bool = False
 
 class NoteResponse(BaseModel):
     id: int
     script_id: int
     content: str
+    is_markdown: bool
     created_at: datetime
     updated_at: datetime
 
