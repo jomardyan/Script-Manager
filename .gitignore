@@ -39,7 +39,25 @@ Thumbs.db
 # Logs
 *.log
 logs/
+backend.log
+frontend.log
+startup_test.log
 
 # Temporary files
 /tmp/
 *.tmp
+
+# Startup script artifacts and dependency tracking
+backend/venv/.requirements.sha256
+frontend/node_modules/.deps.sha256
+
+# Environment configuration
+.env
+.env.local
+.env.*.local
+
+# Database and runtime state
+backend/data/
+*.sqlite
+*.sqlite3
+*.pid

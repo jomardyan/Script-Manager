@@ -1,12 +1,13 @@
 """
 Folder roots API endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from typing import List
 from datetime import datetime
 import aiosqlite
+import asyncio
 
-from app.db.database import get_db
+from app.db.database import get_db, DB_PATH
 from app.models.schemas import FolderRootCreate, FolderRootResponse, ScanRequest, ScanResponse
 from app.services.scanner import scan_directory
 
@@ -78,13 +79,129 @@ async def delete_folder_root(root_id: int, db: aiosqlite.Connection = Depends(ge
     await db.commit()
     return {"message": "Folder root deleted successfully"}
 
+async def _perform_scan_background(root_id: int, root_data: dict, scan_id: int):
+    """Background task to perform the actual scanning"""
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            # Scan directory
+            scripts = await scan_directory(
+                root_data['path'],
+                root_data['recursive'],
+                root_data['include_patterns'],
+                root_data['exclude_patterns'],
+                root_data['follow_symlinks'],
+                root_data['max_file_size']
+            )
+            
+            new_count = 0
+            updated_count = 0
+            deleted_count = 0
+            
+            # Process scanned scripts
+            for script in scripts:
+                # Check if script already exists
+                async with db.execute(
+                    "SELECT id, hash, mtime FROM scripts WHERE path = ?",
+                    (script['path'],)
+                ) as cursor:
+                    existing = await cursor.fetchone()
+                
+                if existing:
+                    # Update if changed
+                    if existing[1] != script['hash'] or existing[2] != script['mtime']:
+                        await db.execute(
+                            """
+                            UPDATE scripts 
+                            SET name = ?, extension = ?, language = ?, size = ?,
+                                mtime = ?, hash = ?, line_count = ?, missing_flag = 0,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                            """,
+                            (
+                                script['name'], script['extension'], script['language'],
+                                script['size'], script['mtime'], script['hash'],
+                                script['line_count'], existing[0]
+                            )
+                        )
+                        updated_count += 1
+                    else:
+                        # Mark as not missing
+                        await db.execute(
+                            "UPDATE scripts SET missing_flag = 0 WHERE id = ?",
+                            (existing[0],)
+                        )
+                else:
+                    # Insert new script
+                    await db.execute(
+                        """
+                        INSERT INTO scripts (root_id, path, name, extension, language,
+                                           size, mtime, hash, line_count)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            root_id, script['path'], script['name'], script['extension'],
+                            script['language'], script['size'], script['mtime'],
+                            script['hash'], script['line_count']
+                        )
+                    )
+                    new_count += 1
+            
+            # Mark missing scripts
+            scanned_paths = {s['path'] for s in scripts}
+            async with db.execute(
+                "SELECT id, path FROM scripts WHERE root_id = ? AND missing_flag = 0",
+                (root_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                for row in rows:
+                    if row[1] not in scanned_paths:
+                        await db.execute(
+                            "UPDATE scripts SET missing_flag = 1 WHERE id = ?",
+                            (row[0],)
+                        )
+                        deleted_count += 1
+            
+            # Update scan event with success
+            ended_at = datetime.now()
+            await db.execute(
+                """
+                UPDATE scan_events
+                SET ended_at = ?, status = 'completed',
+                    new_count = ?, updated_count = ?, deleted_count = ?
+                WHERE id = ?
+                """,
+                (ended_at, new_count, updated_count, deleted_count, scan_id)
+            )
+            
+            # Update folder root scan time
+            await db.execute(
+                "UPDATE folder_roots SET last_scan_time = ? WHERE id = ?",
+                (ended_at, root_id)
+            )
+            
+            await db.commit()
+    
+    except Exception as e:
+        # Update scan event with error
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                """
+                UPDATE scan_events
+                SET ended_at = ?, status = 'failed', error_message = ?
+                WHERE id = ?
+                """,
+                (datetime.now(), str(e), scan_id)
+            )
+            await db.commit()
+
 @router.post("/{root_id}/scan", response_model=ScanResponse)
 async def scan_folder_root(
     root_id: int,
     scan_request: ScanRequest,
+    background_tasks: BackgroundTasks,
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    """Scan a folder root for scripts"""
+    """Scan a folder root for scripts (returns immediately, runs in background)"""
     # Get folder root details
     async with db.execute("SELECT * FROM folder_roots WHERE id = ?", (root_id,)) as cursor:
         root_row = await cursor.fetchone()
@@ -104,125 +221,49 @@ async def scan_folder_root(
     scan_id = cursor.lastrowid
     await db.commit()
     
-    try:
-        # Scan directory
-        scripts = await scan_directory(
-            root['path'],
-            root['recursive'],
-            root['include_patterns'],
-            root['exclude_patterns'],
-            root['follow_symlinks'],
-            root['max_file_size']
-        )
-        
-        new_count = 0
-        updated_count = 0
-        deleted_count = 0
-        
-        # Process scanned scripts
-        for script in scripts:
-            # Check if script already exists
-            async with db.execute(
-                "SELECT id, hash, mtime FROM scripts WHERE path = ?",
-                (script['path'],)
-            ) as cursor:
-                existing = await cursor.fetchone()
-            
-            if existing:
-                # Update if changed
-                if existing[1] != script['hash'] or existing[2] != script['mtime']:
-                    await db.execute(
-                        """
-                        UPDATE scripts 
-                        SET name = ?, extension = ?, language = ?, size = ?,
-                            mtime = ?, hash = ?, line_count = ?, missing_flag = 0,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id = ?
-                        """,
-                        (
-                            script['name'], script['extension'], script['language'],
-                            script['size'], script['mtime'], script['hash'],
-                            script['line_count'], existing[0]
-                        )
-                    )
-                    updated_count += 1
-                else:
-                    # Mark as not missing
-                    await db.execute(
-                        "UPDATE scripts SET missing_flag = 0 WHERE id = ?",
-                        (existing[0],)
-                    )
-            else:
-                # Insert new script
-                await db.execute(
-                    """
-                    INSERT INTO scripts (root_id, path, name, extension, language,
-                                       size, mtime, hash, line_count)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        root_id, script['path'], script['name'], script['extension'],
-                        script['language'], script['size'], script['mtime'],
-                        script['hash'], script['line_count']
-                    )
-                )
-                new_count += 1
-        
-        # Mark missing scripts
-        scanned_paths = {s['path'] for s in scripts}
-        async with db.execute(
-            "SELECT id, path FROM scripts WHERE root_id = ? AND missing_flag = 0",
-            (root_id,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-            for row in rows:
-                if row[1] not in scanned_paths:
-                    await db.execute(
-                        "UPDATE scripts SET missing_flag = 1 WHERE id = ?",
-                        (row[0],)
-                    )
-                    deleted_count += 1
-        
-        # Update scan event
-        ended_at = datetime.now()
-        await db.execute(
-            """
-            UPDATE scan_events
-            SET ended_at = ?, status = 'completed',
-                new_count = ?, updated_count = ?, deleted_count = ?
-            WHERE id = ?
-            """,
-            (ended_at, new_count, updated_count, deleted_count, scan_id)
-        )
-        
-        # Update folder root scan time
-        await db.execute(
-            "UPDATE folder_roots SET last_scan_time = ? WHERE id = ?",
-            (ended_at, root_id)
-        )
-        
-        await db.commit()
-        
-        return {
-            'scan_id': scan_id,
-            'status': 'completed',
-            'new_count': new_count,
-            'updated_count': updated_count,
-            'deleted_count': deleted_count,
-            'error_count': 0,
-            'started_at': started_at,
-            'ended_at': ended_at
-        }
+    # Schedule scan as background task
+    background_tasks.add_task(_perform_scan_background, root_id, root, scan_id)
     
-    except Exception as e:
-        # Update scan event with error
-        await db.execute(
-            """
-            UPDATE scan_events
-            SET ended_at = ?, status = 'failed', error_message = ?
-            WHERE id = ?
-            """,
-            (datetime.now(), str(e), scan_id)
-        )
-        await db.commit()
-        raise HTTPException(status_code=500, detail=f"Scan failed: {str(e)}")
+    # Return immediately with scan ID
+    return {
+        'scan_id': scan_id,
+        'status': 'running',
+        'new_count': 0,
+        'updated_count': 0,
+        'deleted_count': 0,
+        'error_count': 0,
+        'started_at': started_at,
+        'ended_at': None
+    }
+
+@router.get("/{root_id}/scan/{scan_id}")
+async def get_scan_status(
+    root_id: int,
+    scan_id: int,
+    db: aiosqlite.Connection = Depends(get_db)
+):
+    """Get the status of a scan operation"""
+    # Verify root exists
+    async with db.execute("SELECT id FROM folder_roots WHERE id = ?", (root_id,)) as cursor:
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Folder root not found")
+    
+    # Get scan event
+    async with db.execute(
+        "SELECT id, status, new_count, updated_count, deleted_count, error_message, started_at, ended_at FROM scan_events WHERE id = ? AND root_id = ?",
+        (scan_id, root_id)
+    ) as cursor:
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Scan not found")
+    
+    return {
+        'scan_id': row[0],
+        'status': row[1],
+        'new_count': row[2] or 0,
+        'updated_count': row[3] or 0,
+        'deleted_count': row[4] or 0,
+        'error_message': row[5],
+        'started_at': row[6],
+        'ended_at': row[7]
+    }

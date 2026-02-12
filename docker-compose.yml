@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  # Backend service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: script-manager-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount data directory for persistent database
+      - script_data:/app/data
+      # Mount folder roots for script scanning (optional - adjust as needed)
+      - /home:/scripts:ro
+    environment:
+      - API_PORT=8000
+      - DATABASE_PATH=/app/data/scripts.db
+    restart: unless-stopped
+    networks:
+      - script-manager-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Frontend service
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: script-manager-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    restart: unless-stopped
+    networks:
+      - script-manager-network
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Optional: Nginx reverse proxy for production-like setup
+  # Uncomment to use Nginx as reverse proxy
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: script-manager-nginx
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #   depends_on:
+  #     - backend
+  #     - frontend
+  #   networks:
+  #     - script-manager-network
+  #   restart: unless-stopped
+
+volumes:
+  script_data:
+    driver: local
+
+networks:
+  script-manager-network:
+    driver: bridge

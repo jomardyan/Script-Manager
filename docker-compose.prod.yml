@@ -1,0 +1,84 @@
+version: '3.8'
+
+# Production configuration with Nginx reverse proxy
+# Usage: docker-compose -f docker-compose.prod.yml up -d
+
+services:
+  # Backend service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: script-manager-backend
+    expose:
+      - 8000
+    volumes:
+      - script_data:/app/data
+      # Mount your script directories here
+      # Example: - /mnt/scripts:/scripts:ro
+    environment:
+      - API_PORT=8000
+      - DATABASE_PATH=/app/data/scripts.db
+    restart: unless-stopped
+    networks:
+      - script-manager-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Frontend service
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: script-manager-frontend
+    expose:
+      - 3000
+    environment:
+      - VITE_API_URL=http://localhost/api
+    restart: unless-stopped
+    networks:
+      - script-manager-network
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: script-manager-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # Optional: SSL certificates for HTTPS
+      # - ./certs/:/etc/nginx/certs/:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - script-manager-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  script_data:
+    driver: local
+
+networks:
+  script-manager-network:
+    driver: bridge

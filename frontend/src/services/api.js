@@ -16,6 +16,7 @@ export const folderRootsApi = {
   get: (id) => api.get(`/folder-roots/${id}`),
   delete: (id) => api.delete(`/folder-roots/${id}`),
   scan: (id, fullScan = false) => api.post(`/folder-roots/${id}/scan`, { full_scan: fullScan }),
+  getScanStatus: (id, scanId) => api.get(`/folder-roots/${id}/scan/${scanId}`),
 };
 
 // Scripts API

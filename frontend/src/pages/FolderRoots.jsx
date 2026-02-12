@@ -67,12 +67,35 @@ function FolderRoots() {
   const handleScan = async (id) => {
     try {
       setScanning(prev => ({ ...prev, [id]: true }));
-      const response = await folderRootsApi.scan(id, false);
-      alert(`Scan completed!\nNew: ${response.data.new_count}\nUpdated: ${response.data.updated_count}\nDeleted: ${response.data.deleted_count}`);
-      loadRoots();
+      
+      // Start the scan (returns immediately)
+      const scanResponse = await folderRootsApi.scan(id, false);
+      const scanId = scanResponse.data.scan_id;
+      
+      // Poll for scan status
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await folderRootsApi.getScanStatus(id, scanId);
+          const status = statusResponse.data;
+          
+          if (status.status === 'completed' || status.status === 'failed') {
+            clearInterval(pollInterval);
+            setScanning(prev => ({ ...prev, [id]: false }));
+            
+            if (status.status === 'completed') {
+              alert(`Scan completed!\nNew: ${status.new_count}\nUpdated: ${status.updated_count}\nDeleted: ${status.deleted_count}`);
+              loadRoots();
+            } else {
+              alert(`Scan failed: ${status.error_message}`);
+            }
+          }
+        } catch (err) {
+          console.error('Error polling scan status:', err);
+        }
+      }, 2000); // Poll every 2 seconds
+      
     } catch (err) {
-      alert('Error scanning: ' + err.message);
-    } finally {
+      alert('Error starting scan: ' + err.message);
       setScanning(prev => ({ ...prev, [id]: false }));
     }
   };
