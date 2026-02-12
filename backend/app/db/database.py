@@ -32,6 +32,8 @@ async def init_db():
                 exclude_patterns TEXT,
                 follow_symlinks BOOLEAN DEFAULT 0,
                 max_file_size INTEGER DEFAULT 10485760,
+                enable_content_indexing BOOLEAN DEFAULT 0,
+                enable_watch_mode BOOLEAN DEFAULT 0,
                 last_scan_time TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -80,6 +82,7 @@ async def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 script_id INTEGER NOT NULL,
                 content TEXT NOT NULL,
+                is_markdown BOOLEAN DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
@@ -164,6 +167,86 @@ async def init_db():
                 new_value TEXT,
                 actor TEXT,
                 FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Create attachments table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                script_id INTEGER,
+                note_id INTEGER,
+                filename TEXT NOT NULL,
+                original_filename TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                mime_type TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE,
+                FOREIGN KEY (note_id) REFERENCES script_notes(id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Create users table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                email TEXT NOT NULL UNIQUE,
+                full_name TEXT,
+                hashed_password TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT 1,
+                is_superuser BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Create roles table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                permissions TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Create user_roles junction table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_roles (
+                user_id INTEGER NOT NULL,
+                role_id INTEGER NOT NULL,
+                assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, role_id),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Create saved_searches table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS saved_searches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                query_params TEXT NOT NULL,
+                is_pinned BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Create FTS5 virtual table for full-text search
+        await db.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS scripts_fts USING fts5(
+                script_id UNINDEXED,
+                name,
+                path,
+                content,
+                notes,
+                tokenize='porter unicode61'
             )
         """)
         

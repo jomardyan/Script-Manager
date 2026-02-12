@@ -29,8 +29,9 @@ async def create_folder_root(
         cursor = await db.execute(
             """
             INSERT INTO folder_roots (path, name, recursive, include_patterns, 
-                                     exclude_patterns, follow_symlinks, max_file_size)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                                     exclude_patterns, follow_symlinks, max_file_size, 
+                                     enable_content_indexing, enable_watch_mode)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 folder_root.path,
@@ -39,7 +40,9 @@ async def create_folder_root(
                 folder_root.include_patterns,
                 folder_root.exclude_patterns,
                 folder_root.follow_symlinks,
-                folder_root.max_file_size
+                folder_root.max_file_size,
+                folder_root.enable_content_indexing,
+                folder_root.enable_watch_mode
             )
         )
         await db.commit()
