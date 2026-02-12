@@ -32,6 +32,7 @@ async def init_db():
                 exclude_patterns TEXT,
                 follow_symlinks BOOLEAN DEFAULT 0,
                 max_file_size INTEGER DEFAULT 10485760,
+                enable_content_indexing BOOLEAN DEFAULT 0,
                 last_scan_time TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -177,6 +178,18 @@ async def init_db():
                 is_pinned BOOLEAN DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Create FTS5 virtual table for full-text search
+        await db.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS scripts_fts USING fts5(
+                script_id UNINDEXED,
+                name,
+                path,
+                content,
+                notes,
+                tokenize='porter unicode61'
             )
         """)
         

@@ -13,6 +13,7 @@ class FolderRootCreate(BaseModel):
     exclude_patterns: Optional[str] = None
     follow_symlinks: bool = False
     max_file_size: int = 10485760  # 10MB
+    enable_content_indexing: bool = False
 
 class FolderRootResponse(BaseModel):
     id: int
@@ -23,6 +24,7 @@ class FolderRootResponse(BaseModel):
     exclude_patterns: Optional[str]
     follow_symlinks: bool
     max_file_size: int
+    enable_content_indexing: bool
     last_scan_time: Optional[datetime]
     created_at: datetime
     updated_at: datetime
@@ -159,3 +161,10 @@ class SavedSearchResponse(BaseModel):
     is_pinned: bool
     created_at: datetime
     updated_at: datetime
+
+class FTSSearchRequest(BaseModel):
+    query: str
+    search_content: bool = True
+    search_notes: bool = True
+    page: int = 1
+    page_size: int = 50
