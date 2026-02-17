@@ -335,3 +335,62 @@ body {
   gap: 10px;
   margin-top: 20px;
 }
+
+.script-detail-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+}
+
+.code-view {
+  max-height: 420px;
+  overflow: auto;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.history-list li {
+  padding: 10px 0;
+  border-bottom: 1px solid #ecf0f1;
+}
+
+.history-list li:last-child {
+  border-bottom: none;
+}
+
+@media (max-width: 1024px) {
+  .script-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .app {
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .sidebar {
+    width: 100%;
+  }
+
+  .main-content {
+    padding: 16px;
+  }
+
+  .table {
+    display: block;
+    overflow-x: auto;
+  }
+}

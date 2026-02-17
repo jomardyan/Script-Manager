@@ -7,8 +7,13 @@ function Scripts() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [totalPages, setTotalPages] = useState(1);
-  const [search, setSearch] = useState('');
+  const [totalResults, setTotalResults] = useState(0);
+  const [searchInput, setSearchInput] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
+  const [sortBy, setSortBy] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
   const [filters, setFilters] = useState({
     language: '',
     status: ''
@@ -16,21 +21,25 @@ function Scripts() {
 
   useEffect(() => {
     loadScripts();
-  }, [page, search, filters]);
+  }, [page, pageSize, appliedSearch, filters, sortBy, sortOrder]);
 
   const loadScripts = async () => {
     try {
       setLoading(true);
+      setError(null);
       const params = {
         page,
-        page_size: 50,
-        search: search || undefined,
+        page_size: pageSize,
+        search: appliedSearch || undefined,
         language: filters.language || undefined,
-        status: filters.status || undefined
+        status: filters.status || undefined,
+        sort_by: sortBy,
+        sort_order: sortOrder
       };
       const response = await scriptsApi.list(params);
       setScripts(response.data.items);
       setTotalPages(response.data.total_pages);
+      setTotalResults(response.data.total);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -40,8 +49,8 @@ function Scripts() {
 
   const handleSearch = (e) => {
     e.preventDefault();
+    setAppliedSearch(searchInput.trim());
     setPage(1);
-    loadScripts();
   };
 
   const getStatusClass = (status) => {
@@ -62,8 +71,8 @@ function Scripts() {
         <input
           type="text"
           placeholder="Search scripts by name or path..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
         />
       </form>
 
@@ -96,6 +105,44 @@ function Scripts() {
           <option value="deprecated">Deprecated</option>
           <option value="archived">Archived</option>
         </select>
+
+        <select
+          value={sortBy}
+          onChange={(e) => {
+            setSortBy(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="name">Sort: Name</option>
+          <option value="mtime">Sort: Modified</option>
+          <option value="size">Sort: Size</option>
+          <option value="language">Sort: Language</option>
+          <option value="status">Sort: Status</option>
+          <option value="path">Sort: Path</option>
+        </select>
+
+        <select
+          value={sortOrder}
+          onChange={(e) => {
+            setSortOrder(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="asc">Order: Ascending</option>
+          <option value="desc">Order: Descending</option>
+        </select>
+
+        <select
+          value={pageSize}
+          onChange={(e) => {
+            setPageSize(Number(e.target.value));
+            setPage(1);
+          }}
+        >
+          <option value={25}>25 / page</option>
+          <option value={50}>50 / page</option>
+          <option value={100}>100 / page</option>
+        </select>
       </div>
 
       {loading ? (
@@ -103,6 +150,9 @@ function Scripts() {
       ) : (
         <>
           <div className="card">
+            <p style={{ marginBottom: '12px', color: '#7f8c8d' }}>
+              Showing {scripts.length} of {totalResults} scripts
+            </p>
             {scripts.length > 0 ? (
               <table className="table">
                 <thead>

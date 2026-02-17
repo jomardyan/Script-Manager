@@ -5,13 +5,27 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from typing import List
 from datetime import datetime
 import aiosqlite
-import asyncio
 
 from app.db.database import get_db, DB_PATH
 from app.models.schemas import FolderRootCreate, FolderRootResponse, ScanRequest, ScanResponse
 from app.services.scanner import scan_directory
 
 router = APIRouter()
+
+
+def _normalize_mtime(value):
+    """Normalize SQLite/Python datetime values for consistent comparisons."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(microsecond=0).isoformat(sep=' ')
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            return parsed.replace(microsecond=0).isoformat(sep=' ')
+        except ValueError:
+            return value
+    return str(value)
 
 @router.get("/", response_model=List[FolderRootResponse])
 async def list_folder_roots(db: aiosqlite.Connection = Depends(get_db)):
@@ -108,7 +122,10 @@ async def _perform_scan_background(root_id: int, root_data: dict, scan_id: int):
                 
                 if existing:
                     # Update if changed
-                    if existing[1] != script['hash'] or existing[2] != script['mtime']:
+                    if (
+                        existing[1] != script['hash']
+                        or _normalize_mtime(existing[2]) != _normalize_mtime(script['mtime'])
+                    ):
                         await db.execute(
                             """
                             UPDATE scripts 

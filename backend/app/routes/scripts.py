@@ -9,11 +9,12 @@ import aiosqlite
 
 from app.db.database import get_db
 from app.models.schemas import (
-    ScriptResponse, ScriptListResponse, StatusUpdate, PaginatedResponse,
+    ScriptResponse, StatusUpdate, PaginatedResponse,
     BulkTagRequest, BulkStatusRequest
 )
 
 router = APIRouter()
+
 
 @router.get("/", response_model=PaginatedResponse)
 async def list_scripts(
@@ -23,6 +24,8 @@ async def list_scripts(
     language: Optional[str] = None,
     status: Optional[str] = None,
     search: Optional[str] = None,
+    sort_by: str = Query("name"),
+    sort_order: str = Query("asc"),
     db: aiosqlite.Connection = Depends(get_db)
 ):
     """List scripts with pagination and filters"""
@@ -45,7 +48,23 @@ async def list_scripts(
         conditions.append("(s.name LIKE ? OR s.path LIKE ?)")
         search_pattern = f"%{search}%"
         params.extend([search_pattern, search_pattern])
-    
+
+    allowed_sort_columns = {
+        "name": "s.name",
+        "path": "s.path",
+        "language": "s.language",
+        "size": "s.size",
+        "mtime": "s.mtime",
+        "status": "st.status",
+    }
+    sort_column = allowed_sort_columns.get(sort_by.lower())
+    if not sort_column:
+        raise HTTPException(status_code=400, detail="Invalid sort_by value")
+
+    sort_direction = sort_order.upper()
+    if sort_direction not in {"ASC", "DESC"}:
+        raise HTTPException(status_code=400, detail="Invalid sort_order value")
+
     where_clause = " AND ".join(conditions)
     
     # Get total count
@@ -70,7 +89,7 @@ async def list_scripts(
         LEFT JOIN tags t ON sct.tag_id = t.id
         WHERE {where_clause}
         GROUP BY s.id
-        ORDER BY s.name
+        ORDER BY {sort_column} {sort_direction}, s.id ASC
         LIMIT ? OFFSET ?
     """
     params.extend([page_size, offset])
@@ -116,11 +135,28 @@ async def get_script(script_id: int, db: aiosqlite.Connection = Depends(get_db))
     
     # Get status
     async with db.execute(
-        "SELECT status FROM script_status WHERE script_id = ?",
+        """
+        SELECT status, classification, owner, environment, deprecated_date, migration_note
+        FROM script_status
+        WHERE script_id = ?
+        """,
         (script_id,)
     ) as cursor:
         status_row = await cursor.fetchone()
-        script['status'] = status_row[0] if status_row else None
+        if status_row:
+            script['status'] = status_row[0]
+            script['classification'] = status_row[1]
+            script['owner'] = status_row[2]
+            script['environment'] = status_row[3]
+            script['deprecated_date'] = status_row[4]
+            script['migration_note'] = status_row[5]
+        else:
+            script['status'] = None
+            script['classification'] = None
+            script['owner'] = None
+            script['environment'] = None
+            script['deprecated_date'] = None
+            script['migration_note'] = None
     
     # Get notes
     async with db.execute(
@@ -393,7 +429,12 @@ async def get_script_content(script_id: int, db: aiosqlite.Connection = Depends(
     file_path_abs = os.path.abspath(file_path)
     root_path_abs = os.path.abspath(root_path)
     
-    if not file_path_abs.startswith(root_path_abs):
+    try:
+        common_path = os.path.commonpath([file_path_abs, root_path_abs])
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied: invalid file path")
+
+    if common_path != root_path_abs:
         raise HTTPException(status_code=403, detail="Access denied: file is outside registered folder root")
     
     # Read file content

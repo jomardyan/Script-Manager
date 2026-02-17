@@ -10,12 +10,16 @@ function Search() {
   const [roots, setRoots] = useState([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [totalResults, setTotalResults] = useState(0);
+  const [hasSearched, setHasSearched] = useState(false);
   const [searchParams, setSearchParams] = useState({
     query: '',
     languages: [],
     tags: [],
     status: [],
     root_ids: [],
+    sort_by: 'name',
+    sort_order: 'asc',
     page: 1,
     page_size: 50
   });
@@ -23,6 +27,12 @@ function Search() {
   useEffect(() => {
     loadFilters();
   }, []);
+
+  useEffect(() => {
+    if (hasSearched) {
+      handleSearch();
+    }
+  }, [page, searchParams.page_size, searchParams.sort_by, searchParams.sort_order]);
 
   const loadFilters = async () => {
     try {
@@ -41,6 +51,7 @@ function Search() {
     if (e) e.preventDefault();
     try {
       setLoading(true);
+      setError(null);
       const params = {
         ...searchParams,
         page,
@@ -52,6 +63,8 @@ function Search() {
       const response = await searchApi.search(params);
       setResults(response.data.items);
       setTotalPages(response.data.total_pages);
+      setTotalResults(response.data.total);
+      setHasSearched(true);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -67,6 +80,35 @@ function Search() {
     }
   };
 
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (page !== 1) {
+      setPage(1);
+      return;
+    }
+    handleSearch();
+  };
+
+  const handleReset = () => {
+    setSearchParams({
+      query: '',
+      languages: [],
+      tags: [],
+      status: [],
+      root_ids: [],
+      sort_by: 'name',
+      sort_order: 'asc',
+      page: 1,
+      page_size: 50
+    });
+    setPage(1);
+    setResults([]);
+    setTotalPages(1);
+    setTotalResults(0);
+    setError(null);
+    setHasSearched(false);
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -75,7 +117,7 @@ function Search() {
       </div>
 
       <div className="card">
-        <form onSubmit={handleSearch}>
+        <form onSubmit={handleSubmit}>
           <div className="form-group">
             <label>Search Query</label>
             <input
@@ -166,7 +208,50 @@ function Search() {
             </div>
           )}
 
-          <button type="submit" className="button">Search</button>
+          <div className="filters">
+            <select
+              value={searchParams.sort_by}
+              onChange={(e) => {
+                setSearchParams({ ...searchParams, sort_by: e.target.value });
+                setPage(1);
+              }}
+            >
+              <option value="name">Sort: Name</option>
+              <option value="mtime">Sort: Modified</option>
+              <option value="size">Sort: Size</option>
+              <option value="language">Sort: Language</option>
+              <option value="status">Sort: Status</option>
+              <option value="path">Sort: Path</option>
+            </select>
+
+            <select
+              value={searchParams.sort_order}
+              onChange={(e) => {
+                setSearchParams({ ...searchParams, sort_order: e.target.value });
+                setPage(1);
+              }}
+            >
+              <option value="asc">Order: Ascending</option>
+              <option value="desc">Order: Descending</option>
+            </select>
+
+            <select
+              value={searchParams.page_size}
+              onChange={(e) => {
+                setSearchParams({ ...searchParams, page_size: Number(e.target.value) });
+                setPage(1);
+              }}
+            >
+              <option value={25}>25 / page</option>
+              <option value={50}>50 / page</option>
+              <option value={100}>100 / page</option>
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button type="submit" className="button">Search</button>
+            <button type="button" className="button button-secondary" onClick={handleReset}>Clear</button>
+          </div>
         </form>
       </div>
 
@@ -177,7 +262,7 @@ function Search() {
       ) : results.length > 0 ? (
         <>
           <div className="card">
-            <h3>Results ({results.length})</h3>
+            <h3>Results ({results.length} of {totalResults})</h3>
             <table className="table">
               <thead>
                 <tr>
@@ -217,7 +302,7 @@ function Search() {
           {totalPages > 1 && (
             <div className="pagination">
               <button
-                onClick={() => { setPage(Math.max(1, page - 1)); handleSearch(); }}
+                onClick={() => setPage(Math.max(1, page - 1))}
                 disabled={page === 1}
               >
                 Previous
@@ -226,7 +311,7 @@ function Search() {
                 Page {page} of {totalPages}
               </span>
               <button
-                onClick={() => { setPage(Math.min(totalPages, page + 1)); handleSearch(); }}
+                onClick={() => setPage(Math.min(totalPages, page + 1))}
                 disabled={page === totalPages}
               >
                 Next
@@ -234,6 +319,10 @@ function Search() {
             </div>
           )}
         </>
+      ) : hasSearched ? (
+        <div className="card">
+          <p>No results found for the current filters.</p>
+        </div>
       ) : null}
     </div>
   );

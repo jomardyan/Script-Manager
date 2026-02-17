@@ -1,8 +1,7 @@
 """
 Search API endpoints
 """
-from fastapi import APIRouter, Depends, Query
-from typing import Optional, List
+from fastapi import APIRouter, Depends
 import aiosqlite
 
 from app.db.database import get_db
@@ -83,6 +82,22 @@ async def search_scripts(
     if search.modified_before:
         conditions.append("s.mtime <= ?")
         params.append(search.modified_before)
+
+    allowed_sort_columns = {
+        "name": "s.name",
+        "path": "s.path",
+        "language": "s.language",
+        "size": "s.size",
+        "mtime": "s.mtime",
+        "status": "st.status",
+    }
+    sort_column = allowed_sort_columns.get(search.sort_by.lower())
+    if not sort_column:
+        sort_column = allowed_sort_columns["name"]
+
+    sort_direction = search.sort_order.upper()
+    if sort_direction not in {"ASC", "DESC"}:
+        sort_direction = "ASC"
     
     where_clause = " AND ".join(conditions)
     
@@ -110,7 +125,7 @@ async def search_scripts(
         LEFT JOIN tags t ON sct.tag_id = t.id
         WHERE {where_clause}
         GROUP BY s.id
-        ORDER BY s.name
+        ORDER BY {sort_column} {sort_direction}, s.id ASC
         LIMIT ? OFFSET ?
     """
     params.extend([search.page_size, offset])

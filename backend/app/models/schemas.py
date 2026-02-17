@@ -48,6 +48,11 @@ class ScriptResponse(BaseModel):
     updated_at: datetime
     tags: List[str] = []
     status: Optional[str] = None
+    classification: Optional[str] = None
+    owner: Optional[str] = None
+    environment: Optional[str] = None
+    deprecated_date: Optional[datetime] = None
+    migration_note: Optional[str] = None
     notes: Optional[str] = None
 
 class ScriptListResponse(BaseModel):
@@ -119,6 +124,8 @@ class SearchRequest(BaseModel):
     max_size: Optional[int] = None
     modified_after: Optional[datetime] = None
     modified_before: Optional[datetime] = None
+    sort_by: str = "name"
+    sort_order: str = "asc"
     page: int = 1
     page_size: int = 50
 

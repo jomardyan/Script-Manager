@@ -6,6 +6,9 @@ function ScriptDetail() {
   const { id } = useParams();
   const [script, setScript] = useState(null);
   const [notes, setNotes] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [content, setContent] = useState('');
+  const [contentError, setContentError] = useState(null);
   const [allTags, setAllTags] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -24,20 +27,44 @@ function ScriptDetail() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [scriptRes, notesRes, tagsRes] = await Promise.all([
+      setError(null);
+      setContentError(null);
+
+      const [scriptRes, notesRes, tagsRes, contentRes, historyRes] = await Promise.allSettled([
         scriptsApi.get(id),
         notesApi.getScriptNotes(id),
-        tagsApi.list()
+        tagsApi.list(),
+        scriptsApi.getContent(id),
+        scriptsApi.getHistory(id)
       ]);
-      setScript(scriptRes.data);
-      setNotes(notesRes.data);
-      setAllTags(tagsRes.data);
+
+      if (scriptRes.status !== 'fulfilled') throw scriptRes.reason;
+      if (notesRes.status !== 'fulfilled') throw notesRes.reason;
+      if (tagsRes.status !== 'fulfilled') throw tagsRes.reason;
+
+      const scriptData = scriptRes.value.data;
+      setScript(scriptData);
+      setNotes(notesRes.value.data);
+      setAllTags(tagsRes.value.data);
       setStatusUpdate({
-        status: scriptRes.data.status || 'active',
-        classification: '',
-        owner: '',
-        environment: ''
+        status: scriptData.status || 'active',
+        classification: scriptData.classification || '',
+        owner: scriptData.owner || '',
+        environment: scriptData.environment || ''
       });
+
+      if (contentRes.status === 'fulfilled') {
+        setContent(contentRes.value.data.content || '');
+      } else {
+        setContent('');
+        setContentError('Unable to load file content from disk.');
+      }
+
+      if (historyRes.status === 'fulfilled') {
+        setHistory(historyRes.value.data || []);
+      } else {
+        setHistory([]);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -77,15 +104,24 @@ function ScriptDetail() {
     }
   };
 
-  const handleRemoveTag = async (tagId) => {
+  const handleRemoveTag = async (tagName) => {
     try {
-      const tag = allTags.find(t => t.name === tagId);
+      const tag = allTags.find((t) => t.name === tagName);
       if (tag) {
         await scriptsApi.removeTag(id, tag.id);
         loadData();
       }
     } catch (err) {
       alert('Error removing tag: ' + err.message);
+    }
+  };
+
+  const handleCopyContent = async () => {
+    try {
+      await navigator.clipboard.writeText(content);
+      alert('Script content copied to clipboard');
+    } catch (err) {
+      alert('Copy failed: ' + err.message);
     }
   };
 
@@ -101,7 +137,7 @@ function ScriptDetail() {
         <p>{script.path}</p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px' }}>
+      <div className="script-detail-grid">
         <div>
           <div className="card">
             <h3>File Information</h3>
@@ -133,6 +169,20 @@ function ScriptDetail() {
                 </tr>
               </tbody>
             </table>
+          </div>
+
+          <div className="card">
+            <h3>Script Content</h3>
+            {contentError ? (
+              <p style={{ color: '#c0392b' }}>{contentError}</p>
+            ) : (
+              <>
+                <button className="button button-secondary" onClick={handleCopyContent} style={{ marginBottom: '10px' }}>
+                  Copy Content
+                </button>
+                <pre className="code-view">{content}</pre>
+              </>
+            )}
           </div>
 
           <div className="card">
@@ -231,6 +281,22 @@ function ScriptDetail() {
                 ))}
               </select>
             </div>
+          </div>
+
+          <div className="card">
+            <h3>Change History</h3>
+            {history.length === 0 ? (
+              <p style={{ color: '#7f8c8d', fontSize: '14px' }}>No changes logged yet.</p>
+            ) : (
+              <ul className="history-list">
+                {history.slice(0, 25).map((entry) => (
+                  <li key={entry.id}>
+                    <div><strong>{entry.change_type}</strong></div>
+                    <div style={{ color: '#7f8c8d', fontSize: '12px' }}>{new Date(entry.event_time).toLocaleString()}</div>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       </div>
