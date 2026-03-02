@@ -157,7 +157,7 @@ function DatabaseStep({ dbConfig, setDbConfig, onTest, testResult, testing, onNe
                 type="number"
                 placeholder={dbConfig.type === 'mysql' ? '3306' : '5432'}
                 value={dbConfig.port || ''}
-                onChange={(e) => setDbConfig({ ...dbConfig, port: parseInt(e.target.value, 10) || undefined })}
+                onChange={(e) => setDbConfig({ ...dbConfig, port: e.target.value === '' ? undefined : parseInt(e.target.value, 10) })}
               />
             </div>
           </div>
@@ -351,7 +351,10 @@ export default function SetupWizard({ onSetupComplete }) {
       setSubmitting(true);
       try {
         const res = await fetch('/api/setup/demo', { method: 'POST' });
-        if (!res.ok) throw new Error(`Server error ${res.status}`);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || `Server error ${res.status}`);
+        }
         setStep(STEPS.DONE);
       } catch (err) {
         setSubmitError(err.message);

@@ -312,6 +312,7 @@ async def _test_mysql(config: DatabaseConfig):
             db=config.database_name or "",
         )
         conn.close()
+        await conn.wait_closed()
         return {"success": True, "message": "MySQL connection successful"}
     except ImportError:
         return {
