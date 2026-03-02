@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import FolderRoots from './pages/FolderRoots';
@@ -5,6 +6,8 @@ import Scripts from './pages/Scripts';
 import ScriptDetail from './pages/ScriptDetail';
 import Tags from './pages/Tags';
 import Search from './pages/Search';
+import SetupWizard from './pages/SetupWizard';
+import { setupApi } from './services/api';
 
 function Navigation() {
   const location = useLocation();
@@ -37,6 +40,22 @@ function Navigation() {
 }
 
 function App() {
+  const [setupDone, setSetupDone] = useState(null); // null = loading
+
+  useEffect(() => {
+    setupApi.getStatus()
+      .then((data) => setSetupDone(Boolean(data.setup_completed)))
+      .catch(() => setSetupDone(false)); // on error, keep user in wizard flow
+  }, []);
+
+  if (setupDone === null) {
+    return <div className="loading" style={{ marginTop: 80 }}>Loading…</div>;
+  }
+
+  if (!setupDone) {
+    return <SetupWizard onSetupComplete={() => setSetupDone(true)} />;
+  }
+
   return (
     <Router>
       <div className="app">

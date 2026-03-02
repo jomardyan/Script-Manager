@@ -6,7 +6,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import init_db
-from app.routes import folder_roots, scripts, tags, notes, search, folders, saved_searches, fts, watch, similarity, attachments, auth
+from app.routes import folder_roots, scripts, tags, notes, search, folders, saved_searches, fts, watch, similarity, attachments, auth, setup
 
 app = FastAPI(
     title="Script Manager API",
@@ -25,6 +25,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(setup.router, prefix="/api/setup", tags=["Setup Wizard"])
 app.include_router(folder_roots.router, prefix="/api/folder-roots", tags=["Folder Roots"])
 app.include_router(scripts.router, prefix="/api/scripts", tags=["Scripts"])
 app.include_router(tags.router, prefix="/api/tags", tags=["Tags"])
@@ -49,7 +50,16 @@ async def startup_event():
     
     async with aiosqlite.connect(DB_PATH) as db:
         await init_default_roles(db)
-        await init_default_admin(db)
+        
+        # Only create the fallback admin/admin account for existing installations
+        # that already completed setup before the wizard was introduced.
+        # Fresh installs must go through the wizard to create their admin account.
+        async with db.execute(
+            "SELECT value FROM app_settings WHERE key = 'setup_completed'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row and row[0] == "true":
+            await init_default_admin(db)
 
 @app.get("/")
 async def root():

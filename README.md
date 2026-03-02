@@ -13,6 +13,7 @@ A web application for managing large collections of script files. Index, search,
 
 ## Features
 
+- **First-Time Installation Wizard**: Guided onboarding for new administrators with three modes
 - **Script Indexing**: Recursively scan and index scripts from multiple folder roots
 - **Metadata Management**: Add notes, tags, status, and classifications to scripts
 - **Fast Search**: Search by filename, path, content, tags, and metadata
@@ -20,6 +21,62 @@ A web application for managing large collections of script files. Index, search,
 - **Duplicate Detection**: Find identical scripts across different locations
 - **Bulk Operations**: Apply changes to multiple scripts at once
 - **Audit Trail**: Track changes to metadata and script status
+
+## Installation Wizard
+
+When you open Script Manager for the first time, you are greeted by the **Installation Wizard** — a guided onboarding experience that gets you up and running in seconds.
+
+### Wizard Modes
+
+| Mode | Description |
+|------|-------------|
+| 🎮 **Demo** | One-click start with pre-loaded sample scripts, tags, and a demo folder root. No configuration needed — perfect for evaluation. |
+| 🚀 **Production** | Full setup flow: choose your database, configure the connection, and create a secure administrator account. |
+| 🛠️ **Development** | Streamlined setup for contributors and developers. Uses SQLite with sensible defaults, skipping unnecessary steps. |
+
+### Wizard Steps (Production / Development)
+
+1. **Welcome** — Select your desired mode
+2. **Database Configuration** — Choose and configure your database backend:
+   - **SQLite** (default, recommended for single-server deployments)
+   - **MySQL / MariaDB** — provide host, port, database name, and credentials
+   - **PostgreSQL** — provide host, port, database name, and credentials
+   - Use the built-in **Test Connection** button to validate before proceeding
+3. **Admin Account** — Create the first administrator account (username, email, password)
+4. **Done** — Confirmation screen with an "Enter Script Manager" button
+
+> **Note:** MySQL and PostgreSQL support requires installing the corresponding driver package
+> (`aiomysql` for MySQL, `asyncpg` for PostgreSQL) and restarting the backend after setup.
+> SQLite works out-of-the-box with no additional dependencies.
+
+### Setup API
+
+The wizard is powered by a dedicated REST API:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/setup/status` | GET | Returns `{ setup_completed, mode }` — used by the frontend on every load |
+| `/api/setup/demo` | POST | Activates demo mode and seeds sample data |
+| `/api/setup/complete` | POST | Completes setup with database + admin configuration |
+| `/api/setup/test-db` | POST | Tests a database connection without persisting anything |
+
+### Screenshots
+
+#### Welcome Screen — Mode Selection
+
+![Setup Wizard Welcome](./docs/screenshots/wizard-welcome.png)
+
+#### Database Configuration
+
+![Setup Wizard Database](./docs/screenshots/wizard-database.png)
+
+#### Admin Account Creation
+
+![Setup Wizard Admin](./docs/screenshots/wizard-admin.png)
+
+#### Setup Complete
+
+![Setup Wizard Done](./docs/screenshots/wizard-done.png)
 
 ## Screenshots
 
@@ -79,6 +136,8 @@ The application will be available at:
 - **Frontend**: http://localhost:3000
 - **Backend API**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs
+
+On first launch you will be redirected to the **Installation Wizard** automatically.
 
 #### Stop the Application
 
@@ -172,6 +231,7 @@ This will automatically:
 1. Install dependencies if needed
 2. Start both backend and frontend
 3. Open the application in your browser
+4. Redirect you to the Installation Wizard on first run
 
 #### Manual Start
 
@@ -204,7 +264,7 @@ The web interface will be available at http://localhost:3000
 ## Architecture
 
 - **Backend**: Python with FastAPI
-- **Database**: SQLite with indexes for fast queries
+- **Database**: SQLite (default) — MySQL and PostgreSQL configurable via setup wizard
 - **Frontend**: React with modern UI components
 - **API**: RESTful API with JSON responses
 - **Containerization**: Docker and Docker Compose for easy deployment
@@ -260,3 +320,4 @@ Configuration options can be set via environment variables:
 ## License
 
 MIT License - see LICENSE file for details
+

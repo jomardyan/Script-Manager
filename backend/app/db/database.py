@@ -238,6 +238,15 @@ async def init_db():
             )
         """)
         
+        # Create app_settings table for wizard/configuration state
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
         # Create FTS5 virtual table for full-text search
         await db.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS scripts_fts USING fts5(

@@ -55,3 +55,30 @@ export const searchApi = {
 };
 
 export default api;
+
+// Setup Wizard API (uses fetch directly to avoid auth headers on first run)
+async function setupFetch(url, options = {}) {
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Request failed: ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export const setupApi = {
+  getStatus: () => setupFetch('/api/setup/status'),
+  activateDemo: () => setupFetch('/api/setup/demo', { method: 'POST' }),
+  complete: (payload) =>
+    setupFetch('/api/setup/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  testDb: (config) =>
+    setupFetch('/api/setup/test-db', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    }),
+};
