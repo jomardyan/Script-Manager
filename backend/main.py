@@ -6,7 +6,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import init_db
-from app.routes import folder_roots, scripts, tags, notes, search, folders, saved_searches, fts, watch, similarity, attachments, auth
+from app.routes import folder_roots, scripts, tags, notes, search, folders, saved_searches, fts, watch, similarity, attachments, auth, setup
 
 app = FastAPI(
     title="Script Manager API",
@@ -25,6 +25,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(setup.router, prefix="/api/setup", tags=["Setup Wizard"])
 app.include_router(folder_roots.router, prefix="/api/folder-roots", tags=["Folder Roots"])
 app.include_router(scripts.router, prefix="/api/scripts", tags=["Scripts"])
 app.include_router(tags.router, prefix="/api/tags", tags=["Tags"])
