@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { setupApi } from '../services/api';
 
 const STEPS = {
   WELCOME: 'welcome',
@@ -350,11 +351,7 @@ export default function SetupWizard({ onSetupComplete }) {
       // Skip configuration — activate demo right away
       setSubmitting(true);
       try {
-        const res = await fetch('/api/setup/demo', { method: 'POST' });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.detail || `Server error ${res.status}`);
-        }
+        await setupApi.activateDemo();
         setStep(STEPS.DONE);
       } catch (err) {
         setSubmitError(err.message);
@@ -370,12 +367,7 @@ export default function SetupWizard({ onSetupComplete }) {
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await fetch('/api/setup/test-db', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(dbConfig),
-      });
-      const data = await res.json();
+      const data = await setupApi.testDb(dbConfig);
       setTestResult(data);
     } catch (err) {
       setTestResult({ success: false, message: err.message });
@@ -385,6 +377,19 @@ export default function SetupWizard({ onSetupComplete }) {
   };
 
   const handleDbNext = () => {
+    // For external databases, require a successful connection test before continuing.
+    if (dbConfig.type === 'mysql' || dbConfig.type === 'postgresql') {
+      if (!testResult || !testResult.success) {
+        setTestResult((prev) => {
+          if (prev && prev.success === false && prev.message) return prev;
+          return {
+            success: false,
+            message: 'Please test the database connection and resolve any issues before continuing.',
+          };
+        });
+        return;
+      }
+    }
     setStep(STEPS.ADMIN);
   };
 
@@ -422,15 +427,7 @@ export default function SetupWizard({ onSetupComplete }) {
           full_name: adminConfig.full_name || null,
         },
       };
-      const res = await fetch('/api/setup/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.detail || `Server error ${res.status}`);
-      }
+      await setupApi.complete(payload);
       setStep(STEPS.DONE);
     } catch (err) {
       setSubmitError(err.message);

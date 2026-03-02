@@ -50,7 +50,16 @@ async def startup_event():
     
     async with aiosqlite.connect(DB_PATH) as db:
         await init_default_roles(db)
-        await init_default_admin(db)
+        
+        # Only create the fallback admin/admin account for existing installations
+        # that already completed setup before the wizard was introduced.
+        # Fresh installs must go through the wizard to create their admin account.
+        async with db.execute(
+            "SELECT value FROM app_settings WHERE key = 'setup_completed'"
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row and row[0] == "true":
+            await init_default_admin(db)
 
 @app.get("/")
 async def root():

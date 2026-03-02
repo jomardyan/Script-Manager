@@ -69,7 +69,7 @@ async def _seed_demo_data(db: aiosqlite.Connection):
     )
     root_id = cursor.lastrowid
 
-    # Sample tags
+    # Sample tags — use INSERT OR IGNORE then SELECT so we always have the id
     tag_names = [
         ("automation", "scripts", "#3498db"),
         ("utility", "scripts", "#2ecc71"),
@@ -77,16 +77,16 @@ async def _seed_demo_data(db: aiosqlite.Connection):
         ("monitoring", "devops", "#9b59b6"),
         ("deployment", "devops", "#e67e22"),
     ]
-    tag_ids = []
+    tag_id_map: dict[str, int] = {}
     for name, group, color in tag_names:
-        try:
-            cur = await db.execute(
-                "INSERT INTO tags (name, group_name, color) VALUES (?, ?, ?)",
-                (name, group, color),
-            )
-            tag_ids.append(cur.lastrowid)
-        except Exception:
-            pass
+        await db.execute(
+            "INSERT OR IGNORE INTO tags (name, group_name, color) VALUES (?, ?, ?)",
+            (name, group, color),
+        )
+        async with db.execute("SELECT id FROM tags WHERE name = ?", (name,)) as cur:
+            row = await cur.fetchone()
+            if row:
+                tag_id_map[name] = row[0]
 
     # Sample scripts
     sample_scripts = [
@@ -159,8 +159,6 @@ async def _seed_demo_data(db: aiosqlite.Connection):
 
     # Assign tags (backup→backup, deploy→deployment+automation, monitor→monitoring,
     # cleanup→utility, health_check→monitoring)
-    assignments = []
-    tag_map = {t[0]: i for i, t in enumerate(tag_names)}
     script_tag_pairs = [
         (0, "backup"),
         (1, "deployment"),
@@ -169,11 +167,10 @@ async def _seed_demo_data(db: aiosqlite.Connection):
         (3, "utility"),
         (4, "monitoring"),
     ]
+    assignments = []
     for script_idx, tag_name in script_tag_pairs:
-        if script_idx < len(script_ids) and tag_name in tag_map:
-            tid_idx = tag_map[tag_name]
-            if tid_idx < len(tag_ids) and tag_ids[tid_idx]:
-                assignments.append((script_ids[script_idx], tag_ids[tid_idx]))
+        if script_idx < len(script_ids) and tag_name in tag_id_map:
+            assignments.append((script_ids[script_idx], tag_id_map[tag_name]))
 
     for sid, tid in assignments:
         try:
@@ -212,6 +209,17 @@ async def get_setup_status(db: aiosqlite.Connection = Depends(get_db)):
 @router.post("/demo")
 async def start_demo_mode(db: aiosqlite.Connection = Depends(get_db)):
     """Activate demo mode and seed sample data."""
+    # Reject if setup has already been completed
+    async with db.execute(
+        "SELECT value FROM app_settings WHERE key = 'setup_completed'"
+    ) as cursor:
+        row = await cursor.fetchone()
+    if row and row[0] == "true":
+        raise HTTPException(
+            status_code=400,
+            detail="Setup has already been completed. Cannot re-run the wizard.",
+        )
+
     await _save_setting(db, "app_mode", "demo")
     await _seed_demo_data(db)
     await _save_setting(db, "setup_completed", "true")
@@ -225,8 +233,29 @@ async def complete_setup(
     db: aiosqlite.Connection = Depends(get_db),
 ):
     """Complete the setup wizard with the provided configuration."""
+    # Reject if setup has already been completed
+    async with db.execute(
+        "SELECT value FROM app_settings WHERE key = 'setup_completed'"
+    ) as cursor:
+        row = await cursor.fetchone()
+    if row and row[0] == "true":
+        raise HTTPException(
+            status_code=400,
+            detail="Setup has already been completed. Cannot re-run the wizard.",
+        )
+
     if config.mode not in ("demo", "production", "development"):
         raise HTTPException(status_code=400, detail="Invalid mode. Choose demo, production, or development.")
+
+    if config.database.type not in ("sqlite", "mysql", "postgresql"):
+        raise HTTPException(status_code=400, detail="Invalid database type. Choose sqlite, mysql, or postgresql.")
+
+    # Admin is required for production and development modes
+    if config.mode in ("production", "development") and not config.admin:
+        raise HTTPException(
+            status_code=400,
+            detail="Admin configuration is required for production and development modes.",
+        )
 
     await _save_setting(db, "app_mode", config.mode)
 
@@ -238,7 +267,7 @@ async def complete_setup(
 
     if config.mode == "demo":
         await _seed_demo_data(db)
-    elif config.admin:
+    else:
         # Create admin account for production / development
         from app.services.auth import get_password_hash, validate_password_strength
 

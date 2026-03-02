@@ -7,6 +7,7 @@ import ScriptDetail from './pages/ScriptDetail';
 import Tags from './pages/Tags';
 import Search from './pages/Search';
 import SetupWizard from './pages/SetupWizard';
+import { setupApi } from './services/api';
 
 function Navigation() {
   const location = useLocation();
@@ -42,10 +43,9 @@ function App() {
   const [setupDone, setSetupDone] = useState(null); // null = loading
 
   useEffect(() => {
-    fetch('/api/setup/status')
-      .then((r) => r.json())
-      .then((data) => setSetupDone(data.setup_completed))
-      .catch(() => setSetupDone(true)); // assume done if API unreachable
+    setupApi.getStatus()
+      .then((data) => setSetupDone(Boolean(data.setup_completed)))
+      .catch(() => setSetupDone(false)); // on error, keep user in wizard flow
   }, []);
 
   if (setupDone === null) {
