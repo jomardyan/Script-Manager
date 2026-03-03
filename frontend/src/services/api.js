@@ -54,6 +54,46 @@ export const searchApi = {
   getStats: () => api.get('/search/stats'),
 };
 
+// Monitors API
+export const monitorsApi = {
+  list: () => api.get('/monitors/'),
+  create: (data) => api.post('/monitors/', data),
+  get: (id) => api.get(`/monitors/${id}`),
+  update: (id, data) => api.put(`/monitors/${id}`, data),
+  delete: (id) => api.delete(`/monitors/${id}`),
+  getPings: (id, limit = 50) => api.get(`/monitors/${id}/pings`, { params: { limit } }),
+  getIncidents: (id) => api.get(`/monitors/${id}/incidents`),
+};
+
+// Schedules API
+export const schedulesApi = {
+  list: () => api.get('/schedules/'),
+  create: (data) => api.post('/schedules/', data),
+  get: (id) => api.get(`/schedules/${id}`),
+  update: (id, data) => api.put(`/schedules/${id}`, data),
+  delete: (id) => api.delete(`/schedules/${id}`),
+  enable: (id) => api.post(`/schedules/${id}/enable`),
+  disable: (id) => api.post(`/schedules/${id}/disable`),
+  trigger: (id) => api.post(`/schedules/${id}/trigger`),
+  listExecutions: (id, limit = 50) => api.get(`/schedules/${id}/executions`, { params: { limit } }),
+  getExecution: (jobId, execId) => api.get(`/schedules/${jobId}/executions/${execId}`),
+  getMetrics: (id, days = 30) => api.get(`/schedules/${id}/metrics`, { params: { days } }),
+};
+
+// Notifications API (channels + incidents)
+export const notificationsApi = {
+  listChannels: () => api.get('/notifications/channels/'),
+  createChannel: (data) => api.post('/notifications/channels/', data),
+  getChannel: (id) => api.get(`/notifications/channels/${id}`),
+  updateChannel: (id, data) => api.put(`/notifications/channels/${id}`, data),
+  deleteChannel: (id) => api.delete(`/notifications/channels/${id}`),
+  testChannel: (id) => api.post(`/notifications/channels/${id}/test`),
+  listIncidents: (status) => api.get('/notifications/incidents/', { params: status ? { status } : {} }),
+  getIncident: (id) => api.get(`/notifications/incidents/${id}`),
+  updateIncident: (id, data) => api.put(`/notifications/incidents/${id}`, data),
+  deleteIncident: (id) => api.delete(`/notifications/incidents/${id}`),
+};
+
 export default api;
 
 // Setup Wizard API (uses fetch directly to avoid auth headers on first run)

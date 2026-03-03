@@ -7,6 +7,9 @@ import ScriptDetail from './pages/ScriptDetail';
 import Tags from './pages/Tags';
 import Search from './pages/Search';
 import SetupWizard from './pages/SetupWizard';
+import Monitors from './pages/Monitors';
+import Schedules from './pages/Schedules';
+import Notifications from './pages/Notifications';
 import { setupApi } from './services/api';
 
 function Navigation() {
@@ -33,6 +36,15 @@ function Navigation() {
         </li>
         <li>
           <Link to="/search" className={isActive('/search')}>Search</Link>
+        </li>
+        <li>
+          <Link to="/monitors" className={isActive('/monitors')}>Monitors</Link>
+        </li>
+        <li>
+          <Link to="/schedules" className={isActive('/schedules')}>Schedules</Link>
+        </li>
+        <li>
+          <Link to="/notifications" className={isActive('/notifications')}>Notifications</Link>
         </li>
       </ul>
     </nav>
@@ -71,6 +83,9 @@ function App() {
             <Route path="/scripts/:id" element={<ScriptDetail />} />
             <Route path="/tags" element={<Tags />} />
             <Route path="/search" element={<Search />} />
+            <Route path="/monitors" element={<Monitors />} />
+            <Route path="/schedules" element={<Schedules />} />
+            <Route path="/notifications" element={<Notifications />} />
           </Routes>
         </div>
       </div>
