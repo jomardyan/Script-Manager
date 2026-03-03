@@ -87,6 +87,24 @@ function Monitors() {
     }
   };
 
+  const handlePause = async (id) => {
+    try {
+      await monitorsApi.pause(id);
+      loadData();
+    } catch (err) {
+      alert('Error: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const handleResume = async (id) => {
+    try {
+      await monitorsApi.resume(id);
+      loadData();
+    } catch (err) {
+      alert('Error: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
   const handleSelectMonitor = async (monitor) => {
     setSelectedMonitor(monitor);
     try {
@@ -221,6 +239,11 @@ function Monitors() {
                     </code>
                   </td>
                   <td onClick={e => e.stopPropagation()}>
+                    {m.status === 'paused' ? (
+                      <button className="button" style={{ marginRight: 4 }} onClick={() => handleResume(m.id)}>Resume</button>
+                    ) : (
+                      <button className="button" style={{ marginRight: 4 }} onClick={() => handlePause(m.id)}>Pause</button>
+                    )}
                     <button className="button" onClick={() => handleDelete(m.id)}>Delete</button>
                   </td>
                 </tr>

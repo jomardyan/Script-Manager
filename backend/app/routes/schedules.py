@@ -418,8 +418,89 @@ async def _run_job_execution(
             )
             await db.commit()
 
+        # Zombie / anomaly detection: alert if duration deviates significantly from historical average
+        if status != "running" and duration is not None:
+            await _check_zombie_duration(job_id, duration, execution_id)
+
         if status == "success" or attempt >= max_retries:
             break
 
         attempt += 1
         await asyncio.sleep(retry_delay)
+
+
+# ── Zombie / duration anomaly detection ──────────────────────────────────────
+
+async def _check_zombie_duration(job_id: int, current_duration: float, execution_id: int):
+    """
+    Compare current execution duration against historical average.
+    If the job ran >3× longer than avg or finished in <20% of avg (with ≥5 prior runs),
+    create a 'zombie' incident.
+    """
+    MIN_SAMPLES = 5
+    OVER_MULTIPLIER = 3.0   # flag if current > avg * 3
+    UNDER_FRACTION = 0.20   # flag if current < avg * 0.20
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT AVG(duration_seconds) AS avg_dur, COUNT(*) AS cnt,
+                   name
+            FROM job_executions
+            JOIN schedule_jobs ON schedule_jobs.id = job_executions.job_id
+            WHERE job_executions.job_id = ?
+              AND job_executions.status IN ('success', 'failed')
+              AND job_executions.id != ?
+              AND job_executions.duration_seconds IS NOT NULL
+            """,
+            (job_id, execution_id),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if row is None or row["cnt"] < MIN_SAMPLES or row["avg_dur"] is None:
+            return  # not enough history
+
+        avg_dur = row["avg_dur"]
+        job_name = row["name"]
+
+        if avg_dur <= 0:
+            return
+
+        anomaly = None
+        ratio = current_duration / avg_dur
+        if ratio > OVER_MULTIPLIER:
+            anomaly = (
+                f"Zombie process detected: job '{job_name}' ran for "
+                f"{current_duration:.1f}s (avg: {avg_dur:.1f}s, "
+                f"{ratio:.1f}× over average)"
+            )
+        elif ratio < UNDER_FRACTION:
+            anomaly = (
+                f"Suspiciously short run: job '{job_name}' finished in "
+                f"{current_duration:.1f}s (avg: {avg_dur:.1f}s, "
+                f"only {ratio*100:.0f}% of average)"
+            )
+
+        if anomaly:
+            # Deduplicate: only create if no open anomaly incident exists for this job
+            async with db.execute(
+                """
+                SELECT id FROM incidents
+                WHERE source_type = 'schedule' AND source_id = ?
+                  AND status = 'open'
+                  AND title LIKE 'Abnormal duration for job%'
+                """,
+                (job_id,),
+            ) as cur:
+                existing = await cur.fetchone()
+            if not existing:
+                await db.execute(
+                    """
+                    INSERT INTO incidents
+                        (title, source_type, source_id, status, severity, description)
+                    VALUES (?, 'schedule', ?, 'open', 'warning', ?)
+                    """,
+                    (f"Abnormal duration for job '{job_name}'", job_id, anomaly),
+                )
+                await db.commit()

@@ -20,6 +20,79 @@ function StatusBadge({ status }) {
   );
 }
 
+/** Simple SVG dual-bar chart: success (green) + failed (red) per day */
+function DurationBarChart({ data }) {
+  if (!data || data.length === 0) return <p>No execution data available yet.</p>;
+
+  const W = 680, H = 180, padL = 48, padB = 36, padT = 16, padR = 12;
+  const chartW = W - padL - padR;
+  const chartH = H - padB - padT;
+  const barW = Math.max(4, Math.min(28, Math.floor(chartW / data.length) - 4));
+
+  const maxDur = Math.max(...data.map(d => d.max_duration || 0), 0.1);
+  const maxRuns = Math.max(...data.map(d => d.total_runs || 0), 1);
+
+  const xStep = chartW / data.length;
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <svg width={W} height={H} style={{ display: 'block', fontFamily: 'inherit', fontSize: 10 }}>
+        {/* Y-axis labels (duration) */}
+        {[0, 0.25, 0.5, 0.75, 1].map(frac => {
+          const y = padT + chartH * (1 - frac);
+          return (
+            <g key={frac}>
+              <line x1={padL} x2={W - padR} y1={y} y2={y}
+                stroke="#e2e8f0" strokeWidth={1} />
+              <text x={padL - 4} y={y + 3} textAnchor="end" fill="#94a3b8">
+                {(maxDur * frac).toFixed(1)}s
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Bars: avg duration (blue) */}
+        {data.map((d, i) => {
+          const x = padL + i * xStep + xStep / 2;
+          const h = d.avg_duration != null ? (d.avg_duration / maxDur) * chartH : 0;
+          const y = padT + chartH - h;
+          return (
+            <g key={d.run_date}>
+              <rect x={x - barW / 2} y={y} width={barW} height={h}
+                fill="#3b82f6" opacity={0.8} rx={2} />
+              {/* success count dot */}
+              {d.failed > 0 && (
+                <rect x={x - barW / 2} y={y} width={barW} height={Math.min(4, h)}
+                  fill="#ef4444" rx={2} />
+              )}
+            </g>
+          );
+        })}
+
+        {/* X-axis labels */}
+        {data.map((d, i) => {
+          const x = padL + i * xStep + xStep / 2;
+          const label = d.run_date ? d.run_date.slice(5) : ''; // MM-DD
+          return (
+            <text key={d.run_date} x={x} y={H - 4} textAnchor="middle" fill="#94a3b8">
+              {label}
+            </text>
+          );
+        })}
+
+        {/* Y-axis line */}
+        <line x1={padL} x2={padL} y1={padT} y2={padT + chartH} stroke="#cbd5e1" />
+      </svg>
+
+      {/* Legend */}
+      <div style={{ display: 'flex', gap: 16, marginTop: 4, fontSize: 11, color: '#64748b' }}>
+        <span><span style={{ display: 'inline-block', width: 10, height: 10, background: '#3b82f6', borderRadius: 2, marginRight: 4 }} />Avg duration (s)</span>
+        <span><span style={{ display: 'inline-block', width: 10, height: 4, background: '#ef4444', borderRadius: 2, marginRight: 4 }} />Has failures</span>
+      </div>
+    </div>
+  );
+}
+
 function Schedules() {
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -288,10 +361,9 @@ function Schedules() {
           {metricsView && metrics ? (
             <div>
               <h4>Execution Metrics (last {metrics.days} days)</h4>
-              {metrics.data.length === 0 ? (
-                <p>No execution data available yet.</p>
-              ) : (
-                <table className="table">
+              <DurationBarChart data={metrics.data} />
+              {metrics.data.length === 0 ? null : (
+                <table className="table" style={{ marginTop: 16 }}>
                   <thead>
                     <tr>
                       <th>Date</th>

@@ -10,6 +10,7 @@ import SetupWizard from './pages/SetupWizard';
 import Monitors from './pages/Monitors';
 import Schedules from './pages/Schedules';
 import Notifications from './pages/Notifications';
+import Team from './pages/Team';
 import { setupApi } from './services/api';
 
 function Navigation() {
@@ -45,6 +46,9 @@ function Navigation() {
         </li>
         <li>
           <Link to="/notifications" className={isActive('/notifications')}>Notifications</Link>
+        </li>
+        <li>
+          <Link to="/team" className={isActive('/team')}>Team</Link>
         </li>
       </ul>
     </nav>
@@ -86,6 +90,7 @@ function App() {
             <Route path="/monitors" element={<Monitors />} />
             <Route path="/schedules" element={<Schedules />} />
             <Route path="/notifications" element={<Notifications />} />
+            <Route path="/team" element={<Team />} />
           </Routes>
         </div>
       </div>

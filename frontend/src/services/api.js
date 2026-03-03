@@ -61,6 +61,8 @@ export const monitorsApi = {
   get: (id) => api.get(`/monitors/${id}`),
   update: (id, data) => api.put(`/monitors/${id}`, data),
   delete: (id) => api.delete(`/monitors/${id}`),
+  pause: (id) => api.post(`/monitors/${id}/pause`),
+  resume: (id) => api.post(`/monitors/${id}/resume`),
   getPings: (id, limit = 50) => api.get(`/monitors/${id}/pings`, { params: { limit } }),
   getIncidents: (id) => api.get(`/monitors/${id}/incidents`),
 };
@@ -92,6 +94,23 @@ export const notificationsApi = {
   getIncident: (id) => api.get(`/notifications/incidents/${id}`),
   updateIncident: (id, data) => api.put(`/notifications/incidents/${id}`, data),
   deleteIncident: (id) => api.delete(`/notifications/incidents/${id}`),
+};
+
+// Team / User management API (admin)
+export const teamApi = {
+  listUsers: () => api.get('/auth/users'),
+  getUser: (id) => api.get(`/auth/users/${id}`),
+  updateUser: (id, params) => api.put(`/auth/users/${id}`, null, { params }),
+  deleteUser: (id) => api.delete(`/auth/users/${id}`),
+  listRoles: () => api.get('/auth/roles'),
+  register: (data) => api.post('/auth/register', null, {
+    params: {
+      username: data.username,
+      email: data.email,
+      password: data.password,
+      full_name: data.full_name || undefined,
+    },
+  }),
 };
 
 export default api;

@@ -153,6 +153,43 @@ async def delete_monitor(monitor_id: int, db: aiosqlite.Connection = Depends(get
     await db.commit()
 
 
+@router.post("/{monitor_id}/pause", response_model=MonitorResponse)
+async def pause_monitor(monitor_id: int, db: aiosqlite.Connection = Depends(get_db)):
+    """Pause a monitor (stops overdue detection and alerting)."""
+    async with db.execute("SELECT id FROM monitors WHERE id = ?", (monitor_id,)) as cur:
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Monitor not found")
+    await db.execute(
+        "UPDATE monitors SET status = 'paused', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (monitor_id,),
+    )
+    await db.commit()
+    async with db.execute("SELECT * FROM monitors WHERE id = ?", (monitor_id,)) as cur:
+        row = await cur.fetchone()
+    return _monitor_from_row(row)
+
+
+@router.post("/{monitor_id}/resume", response_model=MonitorResponse)
+async def resume_monitor(monitor_id: int, db: aiosqlite.Connection = Depends(get_db)):
+    """Resume a paused monitor."""
+    async with db.execute("SELECT * FROM monitors WHERE id = ?", (monitor_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Monitor not found")
+    if row["status"] != "paused":
+        raise HTTPException(status_code=400, detail="Monitor is not paused")
+    # Restore to 'new' if never pinged, else recompute status on next list
+    new_status = "new" if row["last_ping_at"] is None else "ok"
+    await db.execute(
+        "UPDATE monitors SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (new_status, monitor_id),
+    )
+    await db.commit()
+    async with db.execute("SELECT * FROM monitors WHERE id = ?", (monitor_id,)) as cur:
+        row = await cur.fetchone()
+    return _monitor_from_row(row)
+
+
 # ── Ping endpoint ─────────────────────────────────────────────────────────────
 
 @router.post("/ping/{ping_key}")
