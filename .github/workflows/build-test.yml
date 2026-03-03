@@ -37,7 +37,7 @@ jobs:
       - name: Run backend tests if present
         run: |
           if [ -d backend/tests ]; then
-            python -m pip install pytest
+            python -m pip install pytest pytest-asyncio httpx
             python -m pytest backend/tests
           else
             echo "No backend tests found."

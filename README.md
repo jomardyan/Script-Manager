@@ -17,10 +17,20 @@ A web application for managing large collections of script files. Index, search,
 - **Script Indexing**: Recursively scan and index scripts from multiple folder roots
 - **Metadata Management**: Add notes, tags, status, and classifications to scripts
 - **Fast Search**: Search by filename, path, content, tags, and metadata
+- **Full-Text Search (FTS)**: Porter-stemmed full-text search across script content and notes
 - **Lifecycle Tracking**: Manage script status (draft, active, deprecated, archived)
 - **Duplicate Detection**: Find identical scripts across different locations
+- **Similarity Detection**: Discover similar scripts using content-based analysis
 - **Bulk Operations**: Apply changes to multiple scripts at once
 - **Audit Trail**: Track changes to metadata and script status
+- **Attachments**: Upload and attach files to scripts or notes
+- **Saved Searches**: Pin and reuse frequently used search queries
+- **Watch Mode**: Automatically detect filesystem changes in real time
+- **Heartbeat Monitors**: Track external cron jobs and services with fail-safe alerts
+- **Schedule Jobs**: Run and manage cron-scheduled commands with execution history
+- **Notifications**: Send alerts via Slack, Discord, email, webhook, PagerDuty, or SMS
+- **Incident Management**: Automatically group and track failures as incidents
+- **Authentication & RBAC**: JWT-based auth with role-based access control (admin, viewer, editor)
 
 ## Installation Wizard
 
@@ -100,6 +110,18 @@ The wizard is powered by a dedicated REST API:
 
 ![Advanced Search](./docs/screenshots/search.png)
 
+### Monitors
+
+![Monitors](./docs/screenshots/monitors.png)
+
+### Schedules
+
+![Schedules](./docs/screenshots/schedules.png)
+
+### Notifications
+
+![Notifications](./docs/screenshots/notifications.png)
+
 ## Supported Script Types
 
 - Python (.py)
@@ -111,6 +133,105 @@ The wizard is powered by a dedicated REST API:
 - YAML (.yml, .yaml)
 - JSON (.json)
 - Terraform (.tf)
+
+## Heartbeat Monitors
+
+Heartbeat Monitors track external cron jobs, backup scripts, or any scheduled process by waiting for periodic **ping** calls. If a ping doesn't arrive within the expected interval plus the grace period, the monitor transitions to **failing** and an Incident is created automatically.
+
+### How it works
+
+1. Create a monitor and note the generated `ping_key`
+2. Add a curl call to the end of your cron job: `curl -s https://your-host/api/monitors/ping/<ping_key>`
+3. Script Manager tracks pings and raises an incident if one is missed
+
+### Monitor API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/monitors/` | GET | List all monitors |
+| `/api/monitors/` | POST | Create a monitor |
+| `/api/monitors/{id}` | GET / PUT / DELETE | Read, update, or delete a monitor |
+| `/api/monitors/{id}/pause` | POST | Pause alerting for a monitor |
+| `/api/monitors/{id}/resume` | POST | Resume alerting for a monitor |
+| `/api/monitors/ping/{ping_key}` | POST | Record a heartbeat ping |
+| `/api/monitors/{id}/pings` | GET | List recent ping history |
+| `/api/monitors/{id}/incidents` | GET | List incidents for a monitor |
+
+## Schedule Jobs
+
+Schedule Jobs let you define cron-scheduled tasks that run shell commands or indexed scripts. Execution history is captured (stdout, stderr, exit code, duration) and performance metrics are available for trend analysis.
+
+### Features
+
+- Cron expression scheduling with timezone support
+- Overlap prevention (a job won't start a second instance while still running)
+- Auto-retry on failure (configurable retries and delay)
+- Timeout enforcement
+- Full stdout/stderr capture per execution
+- Notification channel integration (alert on failure or success)
+
+### Schedule API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/schedules/` | GET | List all scheduled jobs |
+| `/api/schedules/` | POST | Create a scheduled job |
+| `/api/schedules/{id}` | GET / PUT / DELETE | Read, update, or delete a job |
+| `/api/schedules/{id}/enable` | POST | Enable a disabled job |
+| `/api/schedules/{id}/disable` | POST | Disable a job |
+| `/api/schedules/{id}/trigger` | POST | Manually trigger a job immediately |
+| `/api/schedules/{id}/executions` | GET | List execution history |
+| `/api/schedules/{id}/metrics` | GET | Performance metrics for a job |
+
+## Notifications
+
+Notification Channels deliver alerts when monitors fail, schedule jobs error, or incidents are created.
+
+### Supported Channel Types
+
+| Type | Description |
+|------|-------------|
+| `slack` | Post messages to a Slack channel via Incoming Webhooks or Bot tokens |
+| `discord` | Send messages to a Discord channel via webhooks |
+| `email` | Send SMTP email notifications |
+| `webhook` | HTTP POST to any generic webhook URL |
+| `pagerduty` | Create PagerDuty incidents via Events API v2 |
+| `sms` | SMS via Twilio (account_sid + auth_token) |
+
+### Notifications API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/notifications/channels/` | GET / POST | List or create channels |
+| `/api/notifications/channels/{id}` | GET / PUT / DELETE | Read, update, or delete a channel |
+| `/api/notifications/channels/{id}/test` | POST | Send a test notification (auth required) |
+| `/api/notifications/incidents/` | GET | List all incidents |
+| `/api/notifications/incidents/{id}` | GET / PUT / DELETE | Read, update, or delete an incident |
+
+> **Security note:** Secret config keys (`token`, `webhook_url`, `auth_token`, etc.) are always redacted (`***`) in API responses.
+
+## Authentication & RBAC
+
+Script Manager uses **JWT Bearer tokens** for authentication and **role-based access control** for authorization.
+
+### Default Roles
+
+| Role | Permissions |
+|------|-------------|
+| `admin` | Full access — manage users, roles, and all resources |
+| `editor` | Create, update, and delete scripts, tags, notes, and searches |
+| `viewer` | Read-only access to scripts and tags |
+
+### Auth API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/auth/login` | POST | Log in and receive an access token (form data) |
+| `/api/auth/me` | GET | Get the current authenticated user |
+| `/api/auth/register` | POST | Register a new user (admin only) |
+| `/api/auth/change-password` | PUT | Change password for the current user |
+| `/api/auth/users` | GET | List all users (admin only) |
+| `/api/auth/roles` | GET | List all roles |
 
 ## Quick Start
 
@@ -309,6 +430,30 @@ Configuration options can be set via environment variables:
 - `DATABASE_PATH`: Path to SQLite database (default: `./data/scripts.db`)
 - `API_PORT`: Backend API port (default: `8000`)
 
+## API Reference
+
+The full interactive API documentation is available at **http://localhost:8000/docs** when the backend is running.
+
+### Core Endpoints
+
+| Prefix | Description |
+|--------|-------------|
+| `/api/setup` | Installation wizard |
+| `/api/auth` | Authentication and user management |
+| `/api/folder-roots` | Manage script folder roots |
+| `/api/scripts` | Script CRUD and metadata |
+| `/api/tags` | Tag management |
+| `/api/notes` | Script notes (markdown supported) |
+| `/api/search` | Advanced script search |
+| `/api/fts` | Full-text search |
+| `/api/saved-searches` | Save and pin search queries |
+| `/api/attachments` | Upload and retrieve file attachments |
+| `/api/similarity` | Find similar scripts |
+| `/api/watch` | Real-time filesystem watch mode |
+| `/api/monitors` | Heartbeat monitor management |
+| `/api/schedules` | Scheduled job management |
+| `/api/notifications` | Notification channels and incidents |
+
 ## Documentation
 
 - [Docker Deployment Guide](./docs/DOCKER.md) - Complete Docker setup and troubleshooting
@@ -320,4 +465,5 @@ Configuration options can be set via environment variables:
 ## License
 
 MIT License - see LICENSE file for details
+
 
