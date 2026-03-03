@@ -6,7 +6,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import init_db
-from app.routes import folder_roots, scripts, tags, notes, search, folders, saved_searches, fts, watch, similarity, attachments, auth, setup
+from app.routes import folder_roots, scripts, tags, notes, search, folders, saved_searches, fts, watch, similarity, attachments, auth, setup, monitors, schedules, notifications
 
 app = FastAPI(
     title="Script Manager API",
@@ -37,6 +37,9 @@ app.include_router(fts.router, prefix="/api/fts", tags=["Full-Text Search"])
 app.include_router(watch.router, prefix="/api/watch", tags=["Watch Mode"])
 app.include_router(similarity.router, prefix="/api/similarity", tags=["Similarity Detection"])
 app.include_router(attachments.router, prefix="/api/attachments", tags=["Attachments"])
+app.include_router(monitors.router, prefix="/api/monitors", tags=["Monitors"])
+app.include_router(schedules.router, prefix="/api/schedules", tags=["Schedules"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 
 @app.on_event("startup")
 async def startup_event():

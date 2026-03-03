@@ -190,3 +190,157 @@ class AttachmentResponse(BaseModel):
     file_size: int
     mime_type: Optional[str]
     created_at: datetime
+
+
+# ── Heartbeat Monitors ──────────────────────────────────────────────────────
+
+class MonitorCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    expected_interval_seconds: int = 300
+    grace_period_seconds: int = 60
+    notify_channel_ids: List[int] = []
+
+class MonitorResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    expected_interval_seconds: int
+    grace_period_seconds: int
+    ping_key: str
+    last_ping_at: Optional[datetime]
+    status: str
+    notify_channel_ids: List[int] = []
+    created_at: datetime
+    updated_at: datetime
+
+class MonitorUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    expected_interval_seconds: Optional[int] = None
+    grace_period_seconds: Optional[int] = None
+    notify_channel_ids: Optional[List[int]] = None
+
+
+# ── Schedule Jobs ────────────────────────────────────────────────────────────
+
+class ScheduleJobCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    script_id: Optional[int] = None
+    command: Optional[str] = None
+    cron_expression: str
+    timezone: str = "UTC"
+    enabled: bool = True
+    max_retries: int = 0
+    retry_delay_seconds: int = 60
+    prevent_overlap: bool = True
+    timeout_seconds: Optional[int] = None
+    notify_channel_ids: List[int] = []
+
+class ScheduleJobResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    script_id: Optional[int]
+    command: Optional[str]
+    cron_expression: str
+    timezone: str
+    enabled: bool
+    max_retries: int
+    retry_delay_seconds: int
+    prevent_overlap: bool
+    timeout_seconds: Optional[int]
+    notify_channel_ids: List[int] = []
+    last_run_at: Optional[datetime]
+    next_run_at: Optional[datetime]
+    last_status: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+class ScheduleJobUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    script_id: Optional[int] = None
+    command: Optional[str] = None
+    cron_expression: Optional[str] = None
+    timezone: Optional[str] = None
+    enabled: Optional[bool] = None
+    max_retries: Optional[int] = None
+    retry_delay_seconds: Optional[int] = None
+    prevent_overlap: Optional[bool] = None
+    timeout_seconds: Optional[int] = None
+    notify_channel_ids: Optional[List[int]] = None
+
+class JobExecutionResponse(BaseModel):
+    id: int
+    job_id: int
+    started_at: datetime
+    ended_at: Optional[datetime]
+    status: str
+    exit_code: Optional[int]
+    stdout: Optional[str]
+    stderr: Optional[str]
+    duration_seconds: Optional[float]
+    retry_attempt: int
+    triggered_by: str
+
+
+# ── Notification Channels ────────────────────────────────────────────────────
+
+class NotificationChannelCreate(BaseModel):
+    name: str
+    type: str  # slack | discord | email | webhook | pagerduty | sms
+    config: dict = {}
+    enabled: bool = True
+
+class NotificationChannelResponse(BaseModel):
+    id: int
+    name: str
+    type: str
+    config: dict
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+class NotificationChannelUpdate(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    config: Optional[dict] = None
+    enabled: Optional[bool] = None
+
+
+# ── Incidents ────────────────────────────────────────────────────────────────
+
+class IncidentResponse(BaseModel):
+    id: int
+    title: str
+    source_type: str
+    source_id: Optional[int]
+    status: str
+    severity: str
+    description: Optional[str]
+    acknowledged_at: Optional[datetime]
+    acknowledged_by: Optional[str]
+    resolved_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+
+class IncidentUpdate(BaseModel):
+    status: Optional[str] = None
+    severity: Optional[str] = None
+    description: Optional[str] = None
+    acknowledged_by: Optional[str] = None
+
+
+# ── User management request bodies ──────────────────────────────────────────
+
+class UserRegister(BaseModel):
+    username: str
+    email: str
+    password: str
+    full_name: Optional[str] = None
+
+class UserUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    role_ids: Optional[List[int]] = None

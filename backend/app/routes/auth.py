@@ -3,7 +3,7 @@ Authentication and User Management API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from typing import Optional
+from typing import Optional, List
 import aiosqlite
 import json
 
@@ -12,6 +12,7 @@ from app.services.auth import (
     verify_password, get_password_hash, create_access_token,
     decode_access_token, validate_password_strength
 )
+from app.models.schemas import UserRegister, UserUpdate
 
 router = APIRouter()
 
@@ -116,18 +117,20 @@ async def read_users_me(current_user: dict = Depends(get_current_user)):
 
 @router.post("/register")
 async def register_user(
-    username: str,
-    email: str,
-    password: str,
-    full_name: Optional[str] = None,
+    data: UserRegister,
     db: aiosqlite.Connection = Depends(get_db)
 ):
     """
-    Register a new user
+    Register a new user.
+    Credentials are sent in the request body (never in the URL/query string).
     
     WARNING: Public self-registration is enabled. For production use,
     consider disabling this endpoint or implementing invitation-based registration.
     """
+    username = data.username
+    email = data.email
+    password = data.password
+    full_name = data.full_name
     # Validate password strength
     is_valid, error_msg = validate_password_strength(password)
     if not is_valid:
@@ -209,3 +212,132 @@ async def change_password(
     await db.commit()
     
     return {"message": "Password changed successfully"}
+
+
+# ── User management (admin) ───────────────────────────────────────────────────
+
+def _is_admin(user: dict) -> bool:
+    """Return True if the user has superuser privileges (via role or is_superuser flag)."""
+    return bool(user.get("is_superuser")) or "superuser" in user.get("permissions", [])
+
+
+@router.get("/users")
+async def list_users(
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """List all users with their assigned roles (admin only)."""
+    if not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    async with db.execute(
+        "SELECT id, username, email, full_name, is_active, is_superuser, created_at FROM users ORDER BY username"
+    ) as cursor:
+        users = await cursor.fetchall()
+    result = []
+    for u in users:
+        user_dict = dict(u)
+        async with db.execute(
+            """
+            SELECT r.id, r.name, r.description
+            FROM roles r JOIN user_roles ur ON r.id = ur.role_id
+            WHERE ur.user_id = ?
+            """,
+            (user_dict["id"],),
+        ) as cur2:
+            roles = await cur2.fetchall()
+        user_dict["roles"] = [dict(r) for r in roles]
+        result.append(user_dict)
+    return result
+
+
+@router.get("/users/{user_id}")
+async def get_user(
+    user_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Get a single user with roles (admin or self)."""
+    if current_user["id"] != user_id and not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    async with db.execute(
+        "SELECT id, username, email, full_name, is_active, is_superuser, created_at FROM users WHERE id = ?",
+        (user_id,),
+    ) as cursor:
+        row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    user_dict = dict(row)
+    async with db.execute(
+        """
+        SELECT r.id, r.name, r.description
+        FROM roles r JOIN user_roles ur ON r.id = ur.role_id
+        WHERE ur.user_id = ?
+        """,
+        (user_dict["id"],),
+    ) as cur2:
+        roles = await cur2.fetchall()
+    user_dict["roles"] = [dict(r) for r in roles]
+    return user_dict
+
+
+@router.put("/users/{user_id}")
+async def update_user(
+    user_id: int,
+    data: UserUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Update a user's active status or role assignments (admin only)."""
+    if not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    async with db.execute("SELECT id FROM users WHERE id = ?", (user_id,)) as cursor:
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="User not found")
+
+    if data.is_active is not None:
+        await db.execute(
+            "UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (int(data.is_active), user_id),
+        )
+
+    if data.role_ids is not None:
+        await db.execute("DELETE FROM user_roles WHERE user_id = ?", (user_id,))
+        for rid in data.role_ids:
+            await db.execute(
+                "INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)",
+                (user_id, rid),
+            )
+
+    await db.commit()
+    return await get_user(user_id, current_user, db)
+
+
+@router.delete("/users/{user_id}", status_code=204)
+async def delete_user(
+    user_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Delete a user (admin only; cannot delete yourself)."""
+    if not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if user_id == current_user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    async with db.execute("SELECT id FROM users WHERE id = ?", (user_id,)) as cursor:
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="User not found")
+    await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    await db.commit()
+
+
+@router.get("/roles")
+async def list_roles(
+    current_user: dict = Depends(get_current_user),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """List all roles (admin only)."""
+    if not _is_admin(current_user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    async with db.execute("SELECT id, name, description, permissions FROM roles ORDER BY name") as cursor:
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
