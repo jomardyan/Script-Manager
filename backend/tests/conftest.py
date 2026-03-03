@@ -8,12 +8,22 @@ import pytest_asyncio
 import aiosqlite
 from httpx import AsyncClient, ASGITransport
 
-# Import the single app instance (module-level import keeps it stable)
+# Insert the backend root onto sys.path so imports resolve correctly.
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import app.db.database as _db_mod
+# Route modules that imported DB_PATH using `from app.db.database import DB_PATH`
+# hold a local string reference (not a module attribute lookup), so patching
+# _db_mod.DB_PATH alone won't affect them — they must be patched separately to
+# use the per-test database.
+import app.routes.schedules as _sched_mod
+import app.routes.folder_roots as _fr_mod
+import app.routes.watch as _watch_mod
 from main import app as _app
+
+# All modules that carry their own DB_PATH reference alongside _db_mod
+_DB_PATH_MODULES = (_sched_mod, _fr_mod, _watch_mod)
 
 
 @pytest_asyncio.fixture
@@ -23,9 +33,11 @@ async def app():
     tmp.close()
     db_path = tmp.name
 
-    # Patch the module-level DB_PATH so init_db writes to our temp file
+    # --- patch DB_PATH in every module that holds a direct reference ----------
     original_db_path = _db_mod.DB_PATH
     _db_mod.DB_PATH = db_path
+    for mod in _DB_PATH_MODULES:
+        mod.DB_PATH = db_path
 
     await _db_mod.init_db()
 
@@ -41,12 +53,24 @@ async def app():
             db.row_factory = aiosqlite.Row
             yield db
 
+    # Snapshot and restore only the specific override we add so we don't
+    # disturb any other overrides that might be registered on the shared app.
+    _prior_override = _app.dependency_overrides.get(_db_mod.get_db)
     _app.dependency_overrides[_db_mod.get_db] = _override_get_db
 
     yield _app
 
-    _app.dependency_overrides.clear()
+    # Restore the get_db override to exactly what it was before this fixture
+    if _prior_override is None:
+        _app.dependency_overrides.pop(_db_mod.get_db, None)
+    else:
+        _app.dependency_overrides[_db_mod.get_db] = _prior_override
+
+    # Restore DB_PATH in all patched modules
     _db_mod.DB_PATH = original_db_path
+    for mod in _DB_PATH_MODULES:
+        mod.DB_PATH = original_db_path
+
     os.unlink(db_path)
 
 
