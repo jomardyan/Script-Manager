@@ -213,7 +213,9 @@ function Team() {
                         ))}
                       </div>
                     ) : (
-                      u.roles?.map(r => <RoleBadge key={r.id} name={r.name} />) || '—'
+                      (u.roles && u.roles.length > 0)
+                        ? u.roles.map(r => <RoleBadge key={r.id} name={r.name} />)
+                        : <span style={{ color: '#94a3b8', fontSize: 12 }}>—</span>
                     )}
                   </td>
                   <td>

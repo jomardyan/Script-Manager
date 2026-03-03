@@ -331,3 +331,16 @@ class IncidentUpdate(BaseModel):
     severity: Optional[str] = None
     description: Optional[str] = None
     acknowledged_by: Optional[str] = None
+
+
+# ── User management request bodies ──────────────────────────────────────────
+
+class UserRegister(BaseModel):
+    username: str
+    email: str
+    password: str
+    full_name: Optional[str] = None
+
+class UserUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    role_ids: Optional[List[int]] = None

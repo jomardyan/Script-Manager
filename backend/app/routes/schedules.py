@@ -2,11 +2,13 @@
 Schedule Jobs API endpoints
 
 Provides CRUD for cron-scheduled tasks with:
- - Timezone-aware cron expressions
+ - Timezone-aware cron expressions (stored; auto-execution requires an external
+   scheduler to call POST /{id}/trigger — no internal scheduler loop is included)
  - Overlap prevention (locking)
  - Auto-retry on failure
  - Full execution log capture (stdout/stderr)
  - Performance metrics
+ - Zombie/anomaly duration detection
 """
 import json
 import subprocess
@@ -24,6 +26,11 @@ from app.models.schemas import (
 )
 
 router = APIRouter()
+
+# Import auth dependency lazily to avoid circular imports
+def _get_auth_dep():
+    from app.routes.auth import get_current_user
+    return get_current_user
 
 
 def _parse_channel_ids(raw: Optional[str]) -> List[int]:
@@ -191,10 +198,12 @@ async def trigger_job(
     job_id: int,
     background_tasks: BackgroundTasks,
     db: aiosqlite.Connection = Depends(get_db),
+    current_user: dict = Depends(_get_auth_dep()),
 ):
     """
     Manually trigger a job immediately (outside its cron schedule).
-    The execution runs in the background; the endpoint returns the new execution ID.
+    Requires authentication. The execution runs in the background;
+    the endpoint returns the new execution ID.
     """
     async with db.execute("SELECT * FROM schedule_jobs WHERE id = ?", (job_id,)) as cur:
         row = await cur.fetchone()
@@ -202,6 +211,21 @@ async def trigger_job(
         raise HTTPException(status_code=404, detail="Job not found")
 
     job = _job_from_row(row)
+
+    # Resolve command: prefer explicit command, fall back to script path
+    command = job.get("command") or ""
+    if not command and job.get("script_id"):
+        async with db.execute(
+            "SELECT path FROM scripts WHERE id = ?", (job["script_id"],)
+        ) as cur:
+            script_row = await cur.fetchone()
+        if script_row:
+            command = script_row[0]
+    if not command:
+        raise HTTPException(
+            status_code=400,
+            detail="Job has no command and no resolvable script path",
+        )
 
     # Check overlap prevention
     if job["prevent_overlap"]:
@@ -227,8 +251,6 @@ async def trigger_job(
     execution_id = cur2.lastrowid
     await db.commit()
 
-    # Run in background
-    command = job.get("command") or ""
     background_tasks.add_task(
         _run_job_execution,
         execution_id=execution_id,
@@ -359,12 +381,12 @@ async def _run_job_execution(
                 stdout_data = raw_out.decode("utf-8", errors="replace")
                 stderr_data = raw_err.decode("utf-8", errors="replace") + "\nTIMEOUT: process killed after timeout\n"
                 exit_code = -1
+                status = "timeout"
             else:
                 stdout_data = raw_out.decode("utf-8", errors="replace")
                 stderr_data = raw_err.decode("utf-8", errors="replace")
                 exit_code = proc.returncode
-
-            status = "success" if exit_code == 0 else "failed"
+                status = "success" if exit_code == 0 else "failed"
         except Exception as exc:
             stderr_data += f"\nExecution error: {exc}"
             exit_code = -1
@@ -375,6 +397,7 @@ async def _run_job_execution(
 
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
+            current_exec_id = execution_id  # safe default; overridden for retries below
             if attempt == 0:
                 # Update the pre-created execution record
                 await db.execute(
@@ -393,7 +416,7 @@ async def _run_job_execution(
                 )
             else:
                 # Insert a new record for the retry attempt
-                await db.execute(
+                retry_cur = await db.execute(
                     """
                     INSERT INTO job_executions
                         (job_id, started_at, ended_at, status, exit_code,
@@ -405,6 +428,7 @@ async def _run_job_execution(
                         status, exit_code, stdout_data, stderr_data, duration, attempt,
                     ),
                 )
+                current_exec_id = retry_cur.lastrowid
 
             # Update job's last_run_at and last_status
             await db.execute(
@@ -418,9 +442,9 @@ async def _run_job_execution(
             )
             await db.commit()
 
-        # Zombie / anomaly detection: alert if duration deviates significantly from historical average
-        if status != "running" and duration is not None:
-            await _check_zombie_duration(job_id, duration, execution_id)
+        # Zombie / anomaly detection — only on first attempt to avoid stale execution_id issues
+        if attempt == 0 and status not in ("running", "timeout") and duration is not None:
+            await _check_zombie_duration(job_id, duration, current_exec_id)
 
         if status == "success" or attempt >= max_retries:
             break

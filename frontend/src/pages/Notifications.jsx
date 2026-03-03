@@ -318,7 +318,7 @@ function Notifications() {
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {inc.status === 'open' && (
                         <button className="button" style={{ marginRight: 4 }}
-                          onClick={() => handleUpdateIncident(inc.id, { status: 'acknowledged', acknowledged_by: 'user' })}>
+                          onClick={() => handleUpdateIncident(inc.id, { status: 'acknowledged' })}>
                           Acknowledge
                         </button>
                       )}

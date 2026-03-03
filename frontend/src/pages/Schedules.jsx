@@ -271,12 +271,12 @@ function Schedules() {
               <div className="form-group">
                 <label>Max retries</label>
                 <input className="input" type="number" min="0" value={formData.max_retries}
-                  onChange={e => setFormData({ ...formData, max_retries: parseInt(e.target.value) })} />
+                  onChange={e => setFormData({ ...formData, max_retries: Number(e.target.value || 0) })} />
               </div>
               <div className="form-group">
                 <label>Retry delay (seconds)</label>
                 <input className="input" type="number" min="1" value={formData.retry_delay_seconds}
-                  onChange={e => setFormData({ ...formData, retry_delay_seconds: parseInt(e.target.value) })} />
+                  onChange={e => setFormData({ ...formData, retry_delay_seconds: Number(e.target.value || 1) })} />
               </div>
               <div className="form-group">
                 <label>Timeout (seconds, optional)</label>

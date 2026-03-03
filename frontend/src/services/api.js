@@ -100,16 +100,14 @@ export const notificationsApi = {
 export const teamApi = {
   listUsers: () => api.get('/auth/users'),
   getUser: (id) => api.get(`/auth/users/${id}`),
-  updateUser: (id, params) => api.put(`/auth/users/${id}`, null, { params }),
+  updateUser: (id, data) => api.put(`/auth/users/${id}`, data),
   deleteUser: (id) => api.delete(`/auth/users/${id}`),
   listRoles: () => api.get('/auth/roles'),
-  register: (data) => api.post('/auth/register', null, {
-    params: {
-      username: data.username,
-      email: data.email,
-      password: data.password,
-      full_name: data.full_name || undefined,
-    },
+  register: (data) => api.post('/auth/register', {
+    username: data.username,
+    email: data.email,
+    password: data.password,
+    full_name: data.full_name || undefined,
   }),
 };
 

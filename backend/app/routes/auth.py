@@ -12,6 +12,7 @@ from app.services.auth import (
     verify_password, get_password_hash, create_access_token,
     decode_access_token, validate_password_strength
 )
+from app.models.schemas import UserRegister, UserUpdate
 
 router = APIRouter()
 
@@ -116,18 +117,20 @@ async def read_users_me(current_user: dict = Depends(get_current_user)):
 
 @router.post("/register")
 async def register_user(
-    username: str,
-    email: str,
-    password: str,
-    full_name: Optional[str] = None,
+    data: UserRegister,
     db: aiosqlite.Connection = Depends(get_db)
 ):
     """
-    Register a new user
+    Register a new user.
+    Credentials are sent in the request body (never in the URL/query string).
     
     WARNING: Public self-registration is enabled. For production use,
     consider disabling this endpoint or implementing invitation-based registration.
     """
+    username = data.username
+    email = data.email
+    password = data.password
+    full_name = data.full_name
     # Validate password strength
     is_valid, error_msg = validate_password_strength(password)
     if not is_valid:
@@ -280,8 +283,7 @@ async def get_user(
 @router.put("/users/{user_id}")
 async def update_user(
     user_id: int,
-    is_active: Optional[bool] = None,
-    role_ids: Optional[List[int]] = None,
+    data: UserUpdate,
     current_user: dict = Depends(get_current_user),
     db: aiosqlite.Connection = Depends(get_db),
 ):
@@ -292,15 +294,15 @@ async def update_user(
         if not await cursor.fetchone():
             raise HTTPException(status_code=404, detail="User not found")
 
-    if is_active is not None:
+    if data.is_active is not None:
         await db.execute(
             "UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (int(is_active), user_id),
+            (int(data.is_active), user_id),
         )
 
-    if role_ids is not None:
+    if data.role_ids is not None:
         await db.execute("DELETE FROM user_roles WHERE user_id = ?", (user_id,))
-        for rid in role_ids:
+        for rid in data.role_ids:
             await db.execute(
                 "INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)",
                 (user_id, rid),

@@ -8,6 +8,12 @@ const STATUS_COLOR = {
   paused: '#f59e0b',
 };
 
+const SEVERITY_COLOR = {
+  critical: '#dc2626',
+  warning: '#f59e0b',
+  info: '#3b82f6',
+};
+
 function MonitorStatusBadge({ status }) {
   const color = STATUS_COLOR[status] || '#94a3b8';
   return (
@@ -21,6 +27,23 @@ function MonitorStatusBadge({ status }) {
       fontSize: 12,
     }}>
       {status}
+    </span>
+  );
+}
+
+function SeverityBadge({ severity }) {
+  const color = SEVERITY_COLOR[severity] || '#94a3b8';
+  return (
+    <span style={{
+      display: 'inline-block',
+      padding: '2px 10px',
+      borderRadius: 12,
+      background: color,
+      color: '#fff',
+      fontWeight: 600,
+      fontSize: 12,
+    }}>
+      {severity}
     </span>
   );
 }
@@ -117,7 +140,7 @@ function Monitors() {
 
   const handleAcknowledgeIncident = async (incidentId) => {
     try {
-      await notificationsApi.updateIncident(incidentId, { status: 'acknowledged', acknowledged_by: 'user' });
+      await notificationsApi.updateIncident(incidentId, { status: 'acknowledged' });
       loadData();
     } catch (err) {
       alert('Error: ' + (err.response?.data?.detail || err.message));
@@ -166,7 +189,7 @@ function Monitors() {
               {openIncidents.map(inc => (
                 <tr key={inc.id}>
                   <td>{inc.title}</td>
-                  <td><MonitorStatusBadge status={inc.severity} /></td>
+                  <td><SeverityBadge severity={inc.severity} /></td>
                   <td>{new Date(inc.created_at).toLocaleString()}</td>
                   <td>
                     <button className="button" style={{ marginRight: 4 }} onClick={() => handleAcknowledgeIncident(inc.id)}>Acknowledge</button>

@@ -21,6 +21,23 @@ router = APIRouter()
 
 VALID_CHANNEL_TYPES = {"slack", "discord", "email", "webhook", "pagerduty", "sms"}
 
+# Config keys whose values are redacted in API responses to prevent secret leakage
+REDACTED_CONFIG_KEYS = {"webhook_url", "url", "auth_token", "account_sid", "routing_key",
+                        "smtp_pass", "password", "token", "api_key", "secret"}
+
+
+def _get_auth_dep():
+    from app.routes.auth import get_current_user
+    return get_current_user
+
+
+def _redact_config(config: dict) -> dict:
+    """Return a copy of config with secret values replaced by '***'."""
+    return {
+        k: "***" if k.lower() in REDACTED_CONFIG_KEYS else v
+        for k, v in config.items()
+    }
+
 
 def _channel_from_row(row) -> dict:
     d = dict(row)
@@ -149,12 +166,14 @@ async def delete_channel(
 
 @router.post("/channels/{channel_id}/test")
 async def test_channel(
-    channel_id: int, db: aiosqlite.Connection = Depends(get_db)
+    channel_id: int,
+    db: aiosqlite.Connection = Depends(get_db),
+    current_user: dict = Depends(_get_auth_dep()),
 ):
     """
-    Send a test notification through the channel.
-    Currently returns the channel config so the caller can verify the setup;
-    actual delivery requires installing optional integrations.
+    Send a test notification through the channel (admin only).
+    Returns a sanitised view of the channel — secret config values are redacted.
+    Actual delivery requires installing optional integrations.
     """
     async with db.execute(
         "SELECT * FROM notification_channels WHERE id = ?", (channel_id,)
@@ -163,9 +182,10 @@ async def test_channel(
     if not row:
         raise HTTPException(status_code=404, detail="Channel not found")
     ch = _channel_from_row(row)
+    safe_ch = {**ch, "config": _redact_config(ch.get("config", {}))}
     return {
         "message": f"Test notification queued for channel '{ch['name']}' (type={ch['type']})",
-        "channel": ch,
+        "channel": safe_ch,
     }
 
 
