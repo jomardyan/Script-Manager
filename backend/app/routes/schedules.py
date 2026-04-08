@@ -1,0 +1,530 @@
+"""
+Schedule Jobs API endpoints
+
+Provides CRUD for cron-scheduled tasks with:
+ - Timezone-aware cron expressions (stored; auto-execution requires an external
+   scheduler to call POST /{id}/trigger — no internal scheduler loop is included)
+ - Overlap prevention (locking)
+ - Auto-retry on failure
+ - Full execution log capture (stdout/stderr)
+ - Performance metrics
+ - Zombie/anomaly duration detection
+"""
+import json
+import subprocess
+import asyncio
+from datetime import datetime, timezone
+from typing import List, Optional
+
+import aiosqlite
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+
+from app.db.database import get_db, DB_PATH
+from app.models.schemas import (
+    ScheduleJobCreate, ScheduleJobResponse, ScheduleJobUpdate,
+    JobExecutionResponse,
+)
+
+router = APIRouter()
+
+# Import auth dependency lazily to avoid circular imports
+def _get_auth_dep():
+    from app.routes.auth import get_current_user
+    return get_current_user
+
+
+def _parse_channel_ids(raw: Optional[str]) -> List[int]:
+    if not raw:
+        return []
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def _job_from_row(row) -> dict:
+    d = dict(row)
+    d["notify_channel_ids"] = _parse_channel_ids(d.get("notify_channel_ids"))
+    return d
+
+
+# ── CRUD ─────────────────────────────────────────────────────────────────────
+
+@router.get("/", response_model=List[ScheduleJobResponse])
+async def list_jobs(db: aiosqlite.Connection = Depends(get_db)):
+    """List all scheduled jobs."""
+    async with db.execute("SELECT * FROM schedule_jobs ORDER BY name") as cur:
+        rows = await cur.fetchall()
+    return [_job_from_row(r) for r in rows]
+
+
+@router.post("/", response_model=ScheduleJobResponse, status_code=201)
+async def create_job(data: ScheduleJobCreate, db: aiosqlite.Connection = Depends(get_db)):
+    """Create a new scheduled job."""
+    if not data.script_id and not data.command:
+        raise HTTPException(
+            status_code=400, detail="Either script_id or command must be provided"
+        )
+    channel_ids_json = json.dumps(data.notify_channel_ids)
+    try:
+        cur = await db.execute(
+            """
+            INSERT INTO schedule_jobs
+                (name, description, script_id, command, cron_expression, timezone,
+                 enabled, max_retries, retry_delay_seconds, prevent_overlap,
+                 timeout_seconds, notify_channel_ids)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data.name, data.description, data.script_id, data.command,
+                data.cron_expression, data.timezone, int(data.enabled),
+                data.max_retries, data.retry_delay_seconds,
+                int(data.prevent_overlap), data.timeout_seconds,
+                channel_ids_json,
+            ),
+        )
+        job_id = cur.lastrowid
+        await db.commit()
+    except aiosqlite.IntegrityError:
+        raise HTTPException(status_code=400, detail="Job name already exists")
+
+    async with db.execute("SELECT * FROM schedule_jobs WHERE id = ?", (job_id,)) as cur:
+        row = await cur.fetchone()
+    return _job_from_row(row)
+
+
+@router.get("/{job_id}", response_model=ScheduleJobResponse)
+async def get_job(job_id: int, db: aiosqlite.Connection = Depends(get_db)):
+    """Get a single scheduled job."""
+    async with db.execute("SELECT * FROM schedule_jobs WHERE id = ?", (job_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return _job_from_row(row)
+
+
+@router.put("/{job_id}", response_model=ScheduleJobResponse)
+async def update_job(
+    job_id: int, data: ScheduleJobUpdate, db: aiosqlite.Connection = Depends(get_db)
+):
+    """Update a scheduled job's configuration."""
+    async with db.execute("SELECT id FROM schedule_jobs WHERE id = ?", (job_id,)) as cur:
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Job not found")
+
+    fields, params = [], []
+    if data.name is not None:
+        fields.append("name = ?"); params.append(data.name)
+    if data.description is not None:
+        fields.append("description = ?"); params.append(data.description)
+    if data.script_id is not None:
+        fields.append("script_id = ?"); params.append(data.script_id)
+    if data.command is not None:
+        fields.append("command = ?"); params.append(data.command)
+    if data.cron_expression is not None:
+        fields.append("cron_expression = ?"); params.append(data.cron_expression)
+    if data.timezone is not None:
+        fields.append("timezone = ?"); params.append(data.timezone)
+    if data.enabled is not None:
+        fields.append("enabled = ?"); params.append(int(data.enabled))
+    if data.max_retries is not None:
+        fields.append("max_retries = ?"); params.append(data.max_retries)
+    if data.retry_delay_seconds is not None:
+        fields.append("retry_delay_seconds = ?"); params.append(data.retry_delay_seconds)
+    if data.prevent_overlap is not None:
+        fields.append("prevent_overlap = ?"); params.append(int(data.prevent_overlap))
+    if data.timeout_seconds is not None:
+        fields.append("timeout_seconds = ?"); params.append(data.timeout_seconds)
+    if data.notify_channel_ids is not None:
+        fields.append("notify_channel_ids = ?"); params.append(json.dumps(data.notify_channel_ids))
+
+    if fields:
+        fields.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(job_id)
+        await db.execute(
+            f"UPDATE schedule_jobs SET {', '.join(fields)} WHERE id = ?", params
+        )
+        await db.commit()
+
+    async with db.execute("SELECT * FROM schedule_jobs WHERE id = ?", (job_id,)) as cur:
+        row = await cur.fetchone()
+    return _job_from_row(row)
+
+
+@router.delete("/{job_id}", status_code=204)
+async def delete_job(job_id: int, db: aiosqlite.Connection = Depends(get_db)):
+    """Delete a scheduled job and all its execution history."""
+    async with db.execute("SELECT id FROM schedule_jobs WHERE id = ?", (job_id,)) as cur:
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Job not found")
+    await db.execute("DELETE FROM schedule_jobs WHERE id = ?", (job_id,))
+    await db.commit()
+
+
+# ── Enable / Disable ──────────────────────────────────────────────────────────
+
+@router.post("/{job_id}/enable")
+async def enable_job(job_id: int, db: aiosqlite.Connection = Depends(get_db)):
+    """Enable a paused/disabled job."""
+    async with db.execute("SELECT id FROM schedule_jobs WHERE id = ?", (job_id,)) as cur:
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Job not found")
+    await db.execute(
+        "UPDATE schedule_jobs SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (job_id,),
+    )
+    await db.commit()
+    return {"message": "Job enabled"}
+
+
+@router.post("/{job_id}/disable")
+async def disable_job(job_id: int, db: aiosqlite.Connection = Depends(get_db)):
+    """Disable (pause) a job without deleting it."""
+    async with db.execute("SELECT id FROM schedule_jobs WHERE id = ?", (job_id,)) as cur:
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Job not found")
+    await db.execute(
+        "UPDATE schedule_jobs SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (job_id,),
+    )
+    await db.commit()
+    return {"message": "Job disabled"}
+
+
+# ── Manual trigger ────────────────────────────────────────────────────────────
+
+@router.post("/{job_id}/trigger")
+async def trigger_job(
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    db: aiosqlite.Connection = Depends(get_db),
+    current_user: dict = Depends(_get_auth_dep()),
+):
+    """
+    Manually trigger a job immediately (outside its cron schedule).
+    Requires authentication. The execution runs in the background;
+    the endpoint returns the new execution ID.
+    """
+    async with db.execute("SELECT * FROM schedule_jobs WHERE id = ?", (job_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _job_from_row(row)
+
+    # Resolve command: prefer explicit command, fall back to script path
+    command = job.get("command") or ""
+    if not command and job.get("script_id"):
+        async with db.execute(
+            "SELECT path FROM scripts WHERE id = ?", (job["script_id"],)
+        ) as cur:
+            script_row = await cur.fetchone()
+        if script_row:
+            command = script_row[0]
+    if not command:
+        raise HTTPException(
+            status_code=400,
+            detail="Job has no command and no resolvable script path",
+        )
+
+    # Check overlap prevention
+    if job["prevent_overlap"]:
+        async with db.execute(
+            "SELECT id FROM job_executions WHERE job_id = ? AND status = 'running'",
+            (job_id,),
+        ) as cur:
+            running = await cur.fetchone()
+        if running:
+            raise HTTPException(
+                status_code=409,
+                detail="Job is already running. Overlap prevention is enabled.",
+            )
+
+    # Create execution record
+    cur2 = await db.execute(
+        """
+        INSERT INTO job_executions (job_id, started_at, status, triggered_by)
+        VALUES (?, CURRENT_TIMESTAMP, 'running', 'manual')
+        """,
+        (job_id,),
+    )
+    execution_id = cur2.lastrowid
+    await db.commit()
+
+    background_tasks.add_task(
+        _run_job_execution,
+        execution_id=execution_id,
+        job_id=job_id,
+        command=command,
+        timeout=job.get("timeout_seconds"),
+        max_retries=job.get("max_retries", 0),
+        retry_delay=job.get("retry_delay_seconds", 60),
+    )
+    return {"message": "Job triggered", "execution_id": execution_id}
+
+
+# ── Executions ────────────────────────────────────────────────────────────────
+
+@router.get("/{job_id}/executions", response_model=List[JobExecutionResponse])
+async def list_executions(
+    job_id: int,
+    limit: int = Query(50, ge=1, le=500),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """List recent executions for a job (most recent first)."""
+    async with db.execute("SELECT id FROM schedule_jobs WHERE id = ?", (job_id,)) as cur:
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Job not found")
+    async with db.execute(
+        """
+        SELECT * FROM job_executions
+        WHERE job_id = ?
+        ORDER BY started_at DESC
+        LIMIT ?
+        """,
+        (job_id, limit),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.get("/{job_id}/executions/{execution_id}", response_model=JobExecutionResponse)
+async def get_execution(
+    job_id: int,
+    execution_id: int,
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Get details (including stdout/stderr logs) for a specific execution."""
+    async with db.execute(
+        "SELECT * FROM job_executions WHERE id = ? AND job_id = ?",
+        (execution_id, job_id),
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Execution not found")
+    return dict(row)
+
+
+@router.get("/{job_id}/metrics")
+async def get_job_metrics(
+    job_id: int,
+    days: int = Query(30, ge=1, le=365),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Return execution duration metrics for graphing performance trends."""
+    async with db.execute("SELECT id FROM schedule_jobs WHERE id = ?", (job_id,)) as cur:
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Job not found")
+
+    async with db.execute(
+        """
+        SELECT
+            DATE(started_at) AS run_date,
+            COUNT(*) AS total_runs,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) AS successful,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+            AVG(duration_seconds) AS avg_duration,
+            MAX(duration_seconds) AS max_duration,
+            MIN(duration_seconds) AS min_duration
+        FROM job_executions
+        WHERE job_id = ?
+          AND started_at >= DATE('now', ? || ' days')
+          AND status != 'running'
+        GROUP BY DATE(started_at)
+        ORDER BY run_date ASC
+        """,
+        (job_id, f"-{days}"),
+    ) as cur:
+        rows = await cur.fetchall()
+
+    return {
+        "job_id": job_id,
+        "days": days,
+        "data": [dict(r) for r in rows],
+    }
+
+
+# ── Background execution helper ───────────────────────────────────────────────
+
+async def _run_job_execution(
+    execution_id: int,
+    job_id: int,
+    command: str,
+    timeout: Optional[int],
+    max_retries: int,
+    retry_delay: int,
+):
+    """Run the command in a subprocess, capture output, record result."""
+    attempt = 0
+    while True:
+        started_at = datetime.now(timezone.utc)
+        stdout_data, stderr_data = "", ""
+        exit_code = None
+        status = "failed"
+
+        try:
+            if not command:
+                raise ValueError("No command to execute")
+
+            proc = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                raw_out, raw_err = await asyncio.wait_for(
+                    proc.communicate(), timeout=float(timeout) if timeout else None
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                raw_out, raw_err = await proc.communicate()
+                stdout_data = raw_out.decode("utf-8", errors="replace")
+                stderr_data = raw_err.decode("utf-8", errors="replace") + "\nTIMEOUT: process killed after timeout\n"
+                exit_code = -1
+                status = "timeout"
+            else:
+                stdout_data = raw_out.decode("utf-8", errors="replace")
+                stderr_data = raw_err.decode("utf-8", errors="replace")
+                exit_code = proc.returncode
+                status = "success" if exit_code == 0 else "failed"
+        except Exception as exc:
+            stderr_data += f"\nExecution error: {exc}"
+            exit_code = -1
+            status = "failed"
+
+        ended_at = datetime.now(timezone.utc)
+        duration = (ended_at - started_at).total_seconds()
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            current_exec_id = execution_id  # safe default; overridden for retries below
+            if attempt == 0:
+                # Update the pre-created execution record
+                await db.execute(
+                    """
+                    UPDATE job_executions
+                    SET ended_at = ?, status = ?, exit_code = ?,
+                        stdout = ?, stderr = ?, duration_seconds = ?,
+                        retry_attempt = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        ended_at.isoformat(), status, exit_code,
+                        stdout_data, stderr_data, duration,
+                        attempt, execution_id,
+                    ),
+                )
+            else:
+                # Insert a new record for the retry attempt
+                retry_cur = await db.execute(
+                    """
+                    INSERT INTO job_executions
+                        (job_id, started_at, ended_at, status, exit_code,
+                         stdout, stderr, duration_seconds, retry_attempt, triggered_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'retry')
+                    """,
+                    (
+                        job_id, started_at.isoformat(), ended_at.isoformat(),
+                        status, exit_code, stdout_data, stderr_data, duration, attempt,
+                    ),
+                )
+                current_exec_id = retry_cur.lastrowid
+
+            # Update job's last_run_at and last_status
+            await db.execute(
+                """
+                UPDATE schedule_jobs
+                SET last_run_at = CURRENT_TIMESTAMP, last_status = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status, job_id),
+            )
+            await db.commit()
+
+        # Zombie / anomaly detection — only on first attempt to avoid stale execution_id issues
+        if attempt == 0 and status not in ("running", "timeout") and duration is not None:
+            await _check_zombie_duration(job_id, duration, current_exec_id)
+
+        if status == "success" or attempt >= max_retries:
+            break
+
+        attempt += 1
+        await asyncio.sleep(retry_delay)
+
+
+# ── Zombie / duration anomaly detection ──────────────────────────────────────
+
+async def _check_zombie_duration(job_id: int, current_duration: float, execution_id: int):
+    """
+    Compare current execution duration against historical average.
+    If the job ran >3× longer than avg or finished in <20% of avg (with ≥5 prior runs),
+    create a 'zombie' incident.
+    """
+    MIN_SAMPLES = 5
+    OVER_MULTIPLIER = 3.0   # flag if current > avg * 3
+    UNDER_FRACTION = 0.20   # flag if current < avg * 0.20
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT AVG(duration_seconds) AS avg_dur, COUNT(*) AS cnt,
+                   name
+            FROM job_executions
+            JOIN schedule_jobs ON schedule_jobs.id = job_executions.job_id
+            WHERE job_executions.job_id = ?
+              AND job_executions.status IN ('success', 'failed')
+              AND job_executions.id != ?
+              AND job_executions.duration_seconds IS NOT NULL
+            """,
+            (job_id, execution_id),
+        ) as cur:
+            row = await cur.fetchone()
+
+        if row is None or row["cnt"] < MIN_SAMPLES or row["avg_dur"] is None:
+            return  # not enough history
+
+        avg_dur = row["avg_dur"]
+        job_name = row["name"]
+
+        if avg_dur <= 0:
+            return
+
+        anomaly = None
+        ratio = current_duration / avg_dur
+        if ratio > OVER_MULTIPLIER:
+            anomaly = (
+                f"Zombie process detected: job '{job_name}' ran for "
+                f"{current_duration:.1f}s (avg: {avg_dur:.1f}s, "
+                f"{ratio:.1f}× over average)"
+            )
+        elif ratio < UNDER_FRACTION:
+            anomaly = (
+                f"Suspiciously short run: job '{job_name}' finished in "
+                f"{current_duration:.1f}s (avg: {avg_dur:.1f}s, "
+                f"only {ratio*100:.0f}% of average)"
+            )
+
+        if anomaly:
+            # Deduplicate: only create if no open anomaly incident exists for this job
+            async with db.execute(
+                """
+                SELECT id FROM incidents
+                WHERE source_type = 'schedule' AND source_id = ?
+                  AND status = 'open'
+                  AND title LIKE 'Abnormal duration for job%'
+                """,
+                (job_id,),
+            ) as cur:
+                existing = await cur.fetchone()
+            if not existing:
+                await db.execute(
+                    """
+                    INSERT INTO incidents
+                        (title, source_type, source_id, status, severity, description)
+                    VALUES (?, 'schedule', ?, 'open', 'warning', ?)
+                    """,
+                    (f"Abnormal duration for job '{job_name}'", job_id, anomaly),
+                )
+                await db.commit()

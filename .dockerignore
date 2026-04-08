@@ -1,0 +1,65 @@
+# Dependencies
+node_modules
+npm-debug.log
+
+# Build outputs
+dist
+build
+frontend/dist
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg-info
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache
+.coverage
+htmlcov
+
+# Virtual environments
+venv
+env
+ENV
+.venv
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Editor/IDE
+.DS_Store
+.git
+.gitignore
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Testing
+.pytest_cache
+.tox
+.coverage
+
+# Documentation (if not needed in image)
+docs/screenshots
+*.md
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# Data (should be mounted as volumes)
+backend/data
+data
+*.db
+*.db-journal
