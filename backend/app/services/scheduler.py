@@ -33,6 +33,11 @@ from app.services.cron import CronError, next_run_utc
 
 logger = logging.getLogger(__name__)
 
+# asyncio keeps only a weak reference to a task, so a job left solely in a local
+# variable can be garbage-collected mid-run, stranding its execution row at
+# 'running' and blocking the job until the next startup reap.
+_running_tasks: set = set()
+
 TICK_SECONDS = int(os.getenv("SCHEDULER_TICK_SECONDS", "30"))
 # A job whose next_run_at slipped further into the past than this is rescheduled
 # rather than fired, so a backend that was offline for a week does not stampede.
@@ -422,10 +427,15 @@ async def evaluate_monitors(db) -> List[int]:
     """
     Flip overdue monitors to 'failing', open an incident and notify.
 
+    Database work is committed before any notification is sent: an outbound
+    webhook can take up to ten seconds, and holding SQLite's single write lock
+    for that long makes every other writer fail with "database is locked".
+
     Returns the ids of monitors that newly transitioned to failing.
     """
     now = datetime.now(timezone.utc)
     transitioned: List[int] = []
+    pending_alerts: List[tuple] = []
 
     async with db.execute("SELECT * FROM monitors WHERE status != 'paused'") as cursor:
         monitors = await cursor.fetchall()
@@ -479,16 +489,20 @@ async def evaluate_monitors(db) -> List[int]:
 
         channel_ids = parse_channel_ids(monitor["notify_channel_ids"])
         if channel_ids:
-            await notifier.dispatch(
-                db, channel_ids,
-                notifier.Alert(
-                    title=title, body=description,
-                    severity="critical", source="script-manager/monitors",
-                ),
-            )
+            pending_alerts.append((channel_ids, title, description))
 
     if transitioned:
         await db.commit()
+
+    for channel_ids, title, description in pending_alerts:
+        await notifier.dispatch(
+            db, channel_ids,
+            notifier.Alert(
+                title=title, body=description,
+                severity="critical", source="script-manager/monitors",
+            ),
+        )
+
     return transitioned
 
 
@@ -571,10 +585,13 @@ async def tick_scheduler(db_path: Optional[str] = None) -> int:
             try:
                 cursor = await db.execute(
                     """
-                    INSERT INTO job_executions (job_id, started_at, status, triggered_by)
-                    VALUES (?, ?, 'running', 'scheduler')
+                    INSERT INTO job_executions
+                        (job_id, started_at, status, triggered_by, overlap_key)
+                    VALUES (?, ?, 'running', 'scheduler', ?)
                     """,
-                    (job_id, now.isoformat()),
+                    # overlap_key is the job id only when the job opted into
+                    # overlap prevention; NULL rows do not collide in SQLite.
+                    (job_id, now.isoformat(), job_id if job["prevent_overlap"] else None),
                 )
                 execution_id = cursor.lastrowid
                 await db.commit()
@@ -584,7 +601,7 @@ async def tick_scheduler(db_path: Optional[str] = None) -> int:
                 logger.info("Skipping job '%s': another run started concurrently", job["name"])
                 continue
 
-            asyncio.create_task(run_job_execution(
+            task = asyncio.create_task(run_job_execution(
                 execution_id=execution_id,
                 job_id=job_id,
                 command=command,
@@ -593,6 +610,8 @@ async def tick_scheduler(db_path: Optional[str] = None) -> int:
                 retry_delay=job["retry_delay_seconds"],
                 db_path=db_path,
             ))
+            _running_tasks.add(task)
+            task.add_done_callback(_running_tasks.discard)
             started += 1
 
         await db.commit()

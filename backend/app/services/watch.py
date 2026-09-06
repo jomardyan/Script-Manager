@@ -11,6 +11,7 @@ spawn hundreds of concurrent writers against one SQLite file, each without a
 busy timeout. It also ignored the folder root's include and exclude patterns,
 so watch mode indexed files a scan would have skipped.
 """
+import asyncio
 import logging
 import queue
 import sqlite3
@@ -257,7 +258,8 @@ class WatchManager:
         )
         observer = Observer()
         observer.schedule(handler, root_path, recursive=bool(recursive))
-        observer.start()
+        # Observer.start() spins up a thread and can touch the filesystem.
+        await asyncio.to_thread(observer.start)
 
         self.observers[root_id] = (observer, worker, work_queue)
         logger.info("Started watching folder root %s: %s", root_id, root_path)
@@ -268,10 +270,34 @@ class WatchManager:
         if not entry:
             return
         observer, worker, work_queue = entry
-        observer.stop()
-        observer.join(timeout=2)
-        work_queue.put(_STOP)
-        worker.join(timeout=5)
+
+        def _shutdown():
+            observer.stop()
+            observer.join(timeout=2)
+            try:
+                # Non-blocking: a full queue whose worker has already died would
+                # otherwise block here forever, and this runs on a thread the
+                # event loop is waiting on.
+                work_queue.put_nowait(_STOP)
+            except queue.Full:
+                logger.warning(
+                    "Watch queue for root %s is full; draining it to stop the worker", root_id
+                )
+                while True:
+                    try:
+                        work_queue.get_nowait()
+                        work_queue.task_done()
+                    except queue.Empty:
+                        break
+                try:
+                    work_queue.put_nowait(_STOP)
+                except queue.Full:
+                    pass
+            worker.join(timeout=5)
+
+        # Joining threads is blocking; keep it off the event loop so stopping a
+        # watcher cannot freeze every other request.
+        await asyncio.to_thread(_shutdown)
         logger.info("Stopped watching folder root %s", root_id)
 
     async def stop_all(self):

@@ -25,6 +25,13 @@ export default function Modal({
   const dialogRef = useRef(null);
   const previouslyFocused = useRef(null);
 
+  // Callers pass onClose as an inline arrow, so it is a new function on every
+  // parent render. Reading it through a ref keeps the effect below from
+  // re-running (and yanking focus out of whatever the user is typing in)
+  // whenever something unrelated, such as a toast, re-renders the page.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
     previouslyFocused.current = document.activeElement;
 
@@ -39,7 +46,7 @@ export default function Modal({
     const onKeyDown = (event) => {
       if (event.key === 'Escape') {
         event.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab' || !node) return;
@@ -71,7 +78,8 @@ export default function Modal({
         previouslyFocused.current.focus();
       }
     };
-  }, [onClose]);
+    // Deliberately empty: the dialog sets up focus handling once, on mount.
+  }, []);
 
   return (
     <div

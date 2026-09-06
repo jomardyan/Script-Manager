@@ -309,8 +309,21 @@ async def complete_setup(
     await _save_setting(db, "db_config", json.dumps(db_meta))
     await _save_setting(db, "db_type", config.database.type)
 
+    demo_credentials = None
     if config.mode == "demo":
         await _seed_demo_data(db)
+        # Demo mode through this endpoint used to finish with no account at
+        # all, locking the installation it had just enabled.
+        if config.admin:
+            await _create_admin(
+                db, config.admin.username, config.admin.email,
+                config.admin.password, config.admin.full_name,
+            )
+        else:
+            password = secrets.token_urlsafe(12)
+            if await _create_admin(db, "demo", "demo@example.com", password,
+                                   "Demo Administrator"):
+                demo_credentials = {"username": "demo", "password": password}
     else:
         # Create admin account for production / development
         from app.services.auth import validate_password_strength
@@ -340,6 +353,7 @@ async def complete_setup(
         "message": "Setup completed successfully",
         "mode": config.mode,
         "db_type": config.database.type,
+        "credentials": demo_credentials,
     }
 
 

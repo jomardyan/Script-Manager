@@ -153,7 +153,11 @@ async def register_user(
     only permitted when ALLOW_SELF_REGISTRATION is enabled, so a public
     deployment does not hand out accounts by default.
     """
-    if not is_admin(current_user) and not self_registration_enabled():
+    from app.routes.deps import auth_required
+
+    # With enforcement off there is no user object to be an admin, so the
+    # Team page's "New user" action would be permanently unusable.
+    if auth_required() and not is_admin(current_user) and not self_registration_enabled():
         raise HTTPException(
             status_code=403,
             detail="Self-registration is disabled. Ask an administrator to create your account.",
@@ -178,7 +182,10 @@ async def register_user(
 
     # Only an administrator may pick the new account's roles; everyone else
     # gets the read-only viewer role.
-    requested_role_ids = data.role_ids if (data.role_ids and is_admin(current_user)) else None
+    from app.routes.deps import auth_required as _auth_required
+
+    may_assign_roles = is_admin(current_user) or not _auth_required()
+    requested_role_ids = data.role_ids if (data.role_ids and may_assign_roles) else None
 
     hashed_password = get_password_hash(data.password)
     cursor = await db.execute(

@@ -323,10 +323,14 @@ async def trigger_job(
     try:
         cur2 = await db.execute(
             """
-            INSERT INTO job_executions (job_id, started_at, status, triggered_by)
-            VALUES (?, ?, 'running', 'manual')
+            INSERT INTO job_executions
+                (job_id, started_at, status, triggered_by, overlap_key)
+            VALUES (?, ?, 'running', 'manual', ?)
             """,
-            (job_id, datetime.now(timezone.utc).isoformat()),
+            (
+                job_id, datetime.now(timezone.utc).isoformat(),
+                job_id if job["prevent_overlap"] else None,
+            ),
         )
         execution_id = cur2.lastrowid
         await db.commit()

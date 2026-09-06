@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 import logging
 import mimetypes
+import time
 
 from app.db.database import get_db
 from app.models.schemas import AttachmentResponse
@@ -30,6 +31,8 @@ Path(ATTACHMENTS_DIR).mkdir(parents=True, exist_ok=True)
 # Max file size (configurable; 10MB default)
 MAX_ATTACHMENT_SIZE = int(os.getenv("MAX_ATTACHMENT_SIZE", str(10 * 1024 * 1024)))
 CHUNK_SIZE = 64 * 1024
+# Files younger than this are never pruned; see prune_orphaned_files.
+PRUNE_MIN_AGE_SECONDS = int(os.getenv("ATTACHMENT_PRUNE_MIN_AGE", str(3600)))
 
 # Extensions that are safe to preserve on the stored file. Anything else is
 # saved without an extension so the file can never be served as active content.
@@ -302,11 +305,20 @@ async def prune_orphaned_files(db: aiosqlite.Connection = Depends(get_db)):
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Cannot read attachments directory: {exc}")
 
+    # An upload writes its file before inserting the row that names it, so a
+    # file younger than this window may simply be an upload still in progress.
+    cutoff = time.time() - PRUNE_MIN_AGE_SECONDS
+
     for name in entries:
         if name in known:
             continue
         path = os.path.join(ATTACHMENTS_DIR, name)
         if not os.path.isfile(path):
+            continue
+        try:
+            if os.path.getmtime(path) > cutoff:
+                continue
+        except OSError:
             continue
         try:
             freed += os.path.getsize(path)

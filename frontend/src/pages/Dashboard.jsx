@@ -27,6 +27,7 @@ export default function Dashboard() {
   const [incidents, setIncidents] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [fts, setFts] = useState(null);
+  const [incidentStats, setIncidentStats] = useState(null);
 
   const load = useCallback(async () => {
     setState({ loading: true, error: null });
@@ -37,6 +38,9 @@ export default function Dashboard() {
       ['stats', can('search.read'), () => searchApi.getStats()],
       ['roots', can('roots.read'), () => folderRootsApi.stats()],
       ['incidents', can('incidents.read'), () => notificationsApi.listIncidents({ status: 'open', limit: 5 })],
+      // The list above is capped for display; the real count comes from the
+      // stats endpoint, so the tile does not silently plateau at 5.
+      ['incidentStats', can('incidents.read'), () => notificationsApi.incidentStats()],
       ['jobs', can('schedules.read'), () => schedulesApi.list()],
       ['fts', can('search.read'), () => ftsApi.status()],
     ];
@@ -53,6 +57,9 @@ export default function Dashboard() {
     setIncidents(byKey.incidents?.status === 'fulfilled' ? byKey.incidents.value?.data ?? [] : []);
     setJobs(byKey.jobs?.status === 'fulfilled' ? byKey.jobs.value?.data ?? [] : []);
     setFts(byKey.fts?.status === 'fulfilled' ? byKey.fts.value?.data ?? null : null);
+    setIncidentStats(
+      byKey.incidentStats?.status === 'fulfilled' ? byKey.incidentStats.value?.data ?? null : null,
+    );
 
     // Only report a failure when everything the account could see failed,
     // which is the signal that the server (not a permission) is the problem.
@@ -68,6 +75,7 @@ export default function Dashboard() {
 
   useEffect(() => { load(); }, [load]);
 
+  const openIncidentCount = incidentStats?.open ?? incidents.length;
   const failingJobs = jobs.filter((j) => j.last_status && j.last_status !== 'success');
   const nextJob = jobs
     .filter((j) => j.enabled && j.next_run_at)
@@ -98,17 +106,21 @@ export default function Dashboard() {
             <StatTile label="Tags" value={stats?.total_tags ?? '—'} to="/tags" hint="Available for classification" />
             <StatTile
               label="Open incidents"
-              value={incidents.length}
+              value={openIncidentCount}
               to="/notifications"
-              hint={incidents.length ? 'Needs acknowledgement' : 'All clear'}
-              tone={incidents.length ? 'danger' : undefined}
+              hint={openIncidentCount ? 'Needs acknowledgement' : 'All clear'}
+              tone={openIncidentCount ? 'danger' : undefined}
             />
           </div>
 
           {incidents.length > 0 && (
             <Card
-              title={`Open incidents (${incidents.length})`}
-              description="Raised by heartbeat monitors and scheduled jobs."
+              title={`Open incidents (${openIncidentCount})`}
+              description={
+                openIncidentCount > incidents.length
+                  ? `Raised by heartbeat monitors and scheduled jobs. Showing the ${incidents.length} most recent.`
+                  : 'Raised by heartbeat monitors and scheduled jobs.'
+              }
               actions={<Link className="button button-secondary button--small" to="/notifications">View all</Link>}
             >
               <div className="table-wrap">

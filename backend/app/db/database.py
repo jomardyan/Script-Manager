@@ -71,6 +71,7 @@ async def _run_migrations(db):
     await _ensure_column(db, "monitors", "notify_channel_ids", "TEXT DEFAULT '[]'")
     await _ensure_column(db, "incidents", "acknowledged_by", "TEXT")
     await _ensure_column(db, "users", "last_login_at", "TIMESTAMP")
+    await _ensure_column(db, "job_executions", "overlap_key", "INTEGER")
 
 
 async def cleanup_orphans(db) -> dict:
@@ -422,6 +423,7 @@ async def init_db():
                 duration_seconds REAL,
                 retry_attempt INTEGER NOT NULL DEFAULT 0,
                 triggered_by TEXT NOT NULL DEFAULT 'scheduler',
+                overlap_key INTEGER,
                 FOREIGN KEY (job_id) REFERENCES schedule_jobs(id) ON DELETE CASCADE
             )
         """)
@@ -494,9 +496,15 @@ async def init_db():
         # Overlap prevention was a check-then-act race: two concurrent triggers
         # could both see no running execution and both insert one. A partial
         # unique index makes the database refuse the second insert.
+        #
+        # The guard is keyed on overlap_key rather than job_id so it applies
+        # only to jobs that asked for it: a job with prevent_overlap = false
+        # writes NULL, and NULLs never collide in a SQLite unique index.
+        await db.execute("DROP INDEX IF EXISTS idx_job_executions_single_running")
         await db.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_job_executions_single_running "
-            "ON job_executions(job_id) WHERE status = 'running'"
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_job_executions_overlap_guard "
+            "ON job_executions(overlap_key) "
+            "WHERE status = 'running' AND overlap_key IS NOT NULL"
         )
         await db.execute("CREATE INDEX IF NOT EXISTS idx_schedule_jobs_next_run ON schedule_jobs(next_run_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_incidents_source ON incidents(source_type, source_id)")

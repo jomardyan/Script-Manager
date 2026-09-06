@@ -306,13 +306,14 @@ async def receive_ping(ping_key: str, request: Request, db: aiosqlite.Connection
 
 # ── Ping history ──────────────────────────────────────────────────────────────
 
-@router.get("/{monitor_id}/ping-url", dependencies=[read_access])
+@router.get("/{monitor_id}/ping-url", dependencies=[write_access])
 async def get_monitor_ping_url(monitor_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """
     Reveal a monitor's ping key.
 
-    Kept on its own endpoint so the key is fetched deliberately rather than
-    being handed out in every listing.
+    Kept on its own endpoint, and behind write access rather than read access,
+    so a read-only viewer cannot collect the keys that let anything forge
+    heartbeats for every monitor.
     """
     async with db.execute(
         "SELECT name, ping_key FROM monitors WHERE id = ?", (monitor_id,)

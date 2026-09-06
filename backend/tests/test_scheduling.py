@@ -123,7 +123,7 @@ async def test_overlap_prevention_refuses_a_second_run(client):
 
 
 @pytest.mark.asyncio
-async def test_only_one_running_execution_can_exist(app):
+async def test_only_one_guarded_execution_can_run(app):
     """
     The database enforces it, not just the application check.
 
@@ -136,16 +136,58 @@ async def test_only_one_running_execution_can_exist(app):
             "INSERT INTO schedule_jobs (name, command, cron_expression) VALUES ('race', 'true', '0 * * * *')"
         )
         await db.execute(
-            "INSERT INTO job_executions (job_id, started_at, status) VALUES (1, CURRENT_TIMESTAMP, 'running')"
+            "INSERT INTO job_executions (job_id, started_at, status, overlap_key) "
+            "VALUES (1, CURRENT_TIMESTAMP, 'running', 1)"
         )
         await db.commit()
 
         with pytest.raises(aiosqlite.IntegrityError):
             await db.execute(
-                "INSERT INTO job_executions (job_id, started_at, status) "
-                "VALUES (1, CURRENT_TIMESTAMP, 'running')"
+                "INSERT INTO job_executions (job_id, started_at, status, overlap_key) "
+                "VALUES (1, CURRENT_TIMESTAMP, 'running', 1)"
             )
             await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_unguarded_jobs_may_run_concurrently(app):
+    """prevent_overlap = false must stay usable, not be blocked by the guard."""
+    async with aiosqlite.connect(db_mod.DB_PATH) as db:
+        await db_mod.apply_connection_pragmas(db)
+        await db.execute(
+            "INSERT INTO schedule_jobs (name, command, cron_expression, prevent_overlap) "
+            "VALUES ('parallel', 'true', '0 * * * *', 0)"
+        )
+        # overlap_key is NULL for these, and NULLs never collide.
+        for _ in range(3):
+            await db.execute(
+                "INSERT INTO job_executions (job_id, started_at, status, overlap_key) "
+                "VALUES (1, CURRENT_TIMESTAMP, 'running', NULL)"
+            )
+        await db.commit()
+
+        async with db.execute(
+            "SELECT COUNT(*) FROM job_executions WHERE status = 'running'"
+        ) as cursor:
+            assert (await cursor.fetchone())[0] == 3
+
+
+@pytest.mark.asyncio
+async def test_trigger_allows_overlap_when_disabled(client):
+    """The API must honour prevent_overlap = false too."""
+    job = await _create_job(client, name="no-guard", command="sleep 0", prevent_overlap=False)
+
+    async with aiosqlite.connect(db_mod.DB_PATH) as db:
+        await db_mod.apply_connection_pragmas(db)
+        await db.execute(
+            "INSERT INTO job_executions (job_id, started_at, status, overlap_key) "
+            "VALUES (?, CURRENT_TIMESTAMP, 'running', NULL)",
+            (job["id"],),
+        )
+        await db.commit()
+
+    resp = await client.post(f"/api/schedules/{job['id']}/trigger")
+    assert resp.status_code == 200, resp.text
 
 
 # ── Execution ─────────────────────────────────────────────────────────────────

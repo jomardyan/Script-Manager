@@ -24,6 +24,7 @@ const EMPTY_FORM = {
   name: '',
   description: '',
   command: '',
+  script_id: null,
   cron_expression: '0 * * * *',
   timezone: 'UTC',
   enabled: true,
@@ -535,6 +536,9 @@ function JobModal({ job, channels, onClose, onSaved, onError }) {
     name: job.name,
     description: job.description || '',
     command: job.command || '',
+    // Carried through so a job linked to a script keeps that link on save, and
+    // so the command field knows it is optional.
+    script_id: job.script_id ?? null,
     cron_expression: job.cron_expression,
     timezone: job.timezone,
     enabled: job.enabled,
@@ -567,7 +571,8 @@ function JobModal({ job, channels, onClose, onSaved, onError }) {
       const payload = {
         name: form.name.trim(),
         description: form.description.trim() || null,
-        command: form.command.trim(),
+        command: form.command.trim() || null,
+        script_id: form.script_id ?? undefined,
         cron_expression: form.cron_expression.trim(),
         timezone: form.timezone.trim() || 'UTC',
         enabled: form.enabled,
@@ -610,11 +615,14 @@ function JobModal({ job, channels, onClose, onSaved, onError }) {
 
         <Field
           label="Command"
-          required
-          hint="Runs through a shell on the backend host, with the backend's own privileges."
+          required={!form.script_id}
+          hint={form.script_id
+            ? "Optional for a script-linked job: leave blank to execute the script's own path."
+            : "Runs through a shell on the backend host, with the backend's own privileges."}
         >
           {(props) => (
-            <input {...props} type="text" required value={form.command} className="mono"
+            <input {...props} type="text" required={!form.script_id} value={form.command}
+              className="mono"
               placeholder="/usr/bin/python3 /srv/scripts/backup.py"
               onChange={(e) => setForm({ ...form, command: e.target.value })} />
           )}
@@ -715,7 +723,12 @@ function JobModal({ job, channels, onClose, onSaved, onError }) {
           <button
             type="submit"
             className="button"
-            disabled={busy || !form.name.trim() || !form.command.trim() || (preview && !preview.ok)}
+            disabled={
+              busy
+              || !form.name.trim()
+              || (!form.command.trim() && !form.script_id)
+              || (preview && !preview.ok)
+            }
           >
             {busy ? 'Saving…' : (isEdit ? 'Save changes' : 'Create job')}
           </button>
