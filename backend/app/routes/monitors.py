@@ -39,9 +39,11 @@ def _parse_channel_ids(raw: Optional[str]) -> List[int]:
     return parse_channel_ids(raw)
 
 
-def _monitor_from_row(row) -> dict:
+def _monitor_from_row(row, include_ping_key: bool = False) -> dict:
     d = dict(row)
     d["notify_channel_ids"] = _parse_channel_ids(d.get("notify_channel_ids"))
+    if not include_ping_key:
+        d.pop("ping_key", None)
     return d
 
 
@@ -121,7 +123,8 @@ async def create_monitor(
         raise HTTPException(status_code=400, detail="Monitor name already exists")
     async with db.execute("SELECT * FROM monitors WHERE id = ?", (monitor_id,)) as cur:
         row = await cur.fetchone()
-    return _monitor_from_row(row)
+    # The creator needs the key once to wire up their cron job.
+    return _monitor_from_row(row, include_ping_key=True)
 
 
 @router.get("/{monitor_id}", response_model=MonitorResponse, dependencies=[read_access])

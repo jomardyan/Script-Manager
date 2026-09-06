@@ -1,259 +1,408 @@
-import { useState, useEffect } from 'react';
-import { teamApi } from '../services/api';
+import { useCallback, useEffect, useState } from 'react';
 
-const ROLE_COLORS = { admin: '#ef4444', editor: '#3b82f6', viewer: '#22c55e' };
+import { apiError, teamApi } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import {
+  Badge, Card, Checkbox, EmptyState, ErrorBanner, Field, PageHeader, StatusBadge,
+  TableSkeleton,
+} from '../components/ui';
+import Modal from '../components/Modal';
+import { useConfirm } from '../components/ConfirmDialog';
+import { useToast } from '../context/ToastContext';
+import { formatDateTime, formatRelative } from '../lib/format';
+
+const ROLE_TONES = { admin: 'danger', editor: 'info', viewer: 'success' };
 
 function RoleBadge({ name }) {
-  return (
-    <span style={{
-      display: 'inline-block', padding: '2px 8px', borderRadius: 10,
-      background: ROLE_COLORS[name] || '#94a3b8', color: '#fff',
-      fontWeight: 600, fontSize: 11, marginRight: 4,
-    }}>
-      {name}
-    </span>
-  );
+  return <Badge tone={ROLE_TONES[name] || 'neutral'}>{name}</Badge>;
 }
 
-function Team() {
+export default function Team() {
+  const toast = useToast();
+  const { user: currentUser } = useAuth();
+  const { confirm, confirmElement } = useConfirm();
+
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [showForm, setShowForm] = useState(false);
-  const [registerData, setRegisterData] = useState({ username: '', email: '', password: '', full_name: '' });
-  const [editingUser, setEditingUser] = useState(null); // { id, role_ids }
+  const [editing, setEditing] = useState(null); // null | 'new' | user
+  const [busyId, setBusyId] = useState(null);
 
-  useEffect(() => { loadData(); }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      const [uRes, rRes] = await Promise.all([teamApi.listUsers(), teamApi.listRoles()]);
-      setUsers(uRes.data);
-      setRoles(rRes.data);
+      const [usersRes, rolesRes] = await Promise.all([teamApi.listUsers(), teamApi.listRoles()]);
+      setUsers(usersRes.data);
+      setRoles(rolesRes.data);
     } catch (err) {
-      setError(err.response?.data?.detail || err.message);
+      setError(apiError(err));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleRegister = async (e) => {
-    e.preventDefault();
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const act = async (id, fn, message) => {
+    setBusyId(id);
     try {
-      await teamApi.register(registerData);
-      setShowForm(false);
-      setRegisterData({ username: '', email: '', password: '', full_name: '' });
-      loadData();
+      await fn();
+      toast.success(message);
+      await loadData();
     } catch (err) {
-      alert('Error: ' + (err.response?.data?.detail || err.message));
+      toast.error(apiError(err));
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const handleToggleActive = async (user) => {
-    try {
-      await teamApi.updateUser(user.id, { is_active: !user.is_active });
-      loadData();
-    } catch (err) {
-      alert('Error: ' + (err.response?.data?.detail || err.message));
+  const toggleActive = async (user) => {
+    if (user.is_active) {
+      const ok = await confirm({
+        title: `Deactivate ${user.username}?`,
+        message: 'They are signed out immediately and cannot sign in again until reactivated.',
+        detail: 'Their data, notes and audit trail entries are kept.',
+        confirmLabel: 'Deactivate',
+      });
+      if (!ok) return;
     }
+    await act(
+      user.id,
+      () => teamApi.updateUser(user.id, { is_active: !user.is_active }),
+      user.is_active ? `Deactivated ${user.username}.` : `Reactivated ${user.username}.`,
+    );
   };
 
-  const handleDeleteUser = async (user) => {
-    if (!confirm(`Delete user "${user.username}"?`)) return;
-    try {
-      await teamApi.deleteUser(user.id);
-      loadData();
-    } catch (err) {
-      alert('Error: ' + (err.response?.data?.detail || err.message));
-    }
+  const deleteUser = async (user) => {
+    const ok = await confirm({
+      title: `Delete ${user.username}?`,
+      message: 'The account is removed permanently.',
+      detail: 'Deactivating instead keeps the account and its history but blocks sign-in.',
+      confirmLabel: 'Delete account',
+    });
+    if (!ok) return;
+    await act(user.id, () => teamApi.deleteUser(user.id), `Deleted ${user.username}.`);
   };
-
-  const handleSaveRoles = async () => {
-    try {
-      await teamApi.updateUser(editingUser.id, { role_ids: editingUser.role_ids });
-      setEditingUser(null);
-      loadData();
-    } catch (err) {
-      alert('Error: ' + (err.response?.data?.detail || err.message));
-    }
-  };
-
-  const toggleRole = (roleId) => {
-    setEditingUser(prev => ({
-      ...prev,
-      role_ids: prev.role_ids.includes(roleId)
-        ? prev.role_ids.filter(id => id !== roleId)
-        : [...prev.role_ids, roleId],
-    }));
-  };
-
-  if (loading) return <div className="loading">Loading…</div>;
-  if (error) return (
-    <div className="error">
-      {error.includes('Admin') ? (
-        <p>⚠ You need admin (superuser) privileges to manage team members.</p>
-      ) : (
-        <p>Error: {error}</p>
-      )}
-    </div>
-  );
 
   return (
     <div>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h2>Team & Access Control</h2>
-          <p>Manage users and role-based permissions (RBAC).</p>
-        </div>
-        <button className="button" onClick={() => setShowForm(!showForm)}>
-          {showForm ? 'Cancel' : '+ New User'}
-        </button>
-      </div>
+      {confirmElement}
+      <PageHeader
+        title="Team & Access Control"
+        description="Accounts and the roles that decide what each one can do."
+        actions={
+          <button type="button" className="button" onClick={() => setEditing('new')}>
+            New user
+          </button>
+        }
+      />
 
-      {showForm && (
-        <div className="card">
-          <h3>Register New User</h3>
-          <form onSubmit={handleRegister}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <div className="form-group">
-                <label>Username *</label>
-                <input className="input" required value={registerData.username}
-                  onChange={e => setRegisterData({ ...registerData, username: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>Email *</label>
-                <input className="input" type="email" required value={registerData.email}
-                  onChange={e => setRegisterData({ ...registerData, email: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>Full Name</label>
-                <input className="input" value={registerData.full_name}
-                  onChange={e => setRegisterData({ ...registerData, full_name: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>Password *</label>
-                <input className="input" type="password" required value={registerData.password}
-                  onChange={e => setRegisterData({ ...registerData, password: e.target.value })} />
-                <small style={{ color: '#64748b' }}>Min 8 chars, must include letter and number</small>
-              </div>
-            </div>
-            <button className="button" type="submit">Create User</button>
-          </form>
-        </div>
-      )}
+      <ErrorBanner message={error} onRetry={loadData} onDismiss={() => setError(null)} />
 
-      <div className="card">
-        <h3>Available Roles</h3>
-        <table className="table">
-          <thead>
-            <tr><th>Role</th><th>Description</th><th>Permissions</th></tr>
-          </thead>
-          <tbody>
-            {roles.map(r => (
-              <tr key={r.id}>
-                <td><RoleBadge name={r.name} /></td>
-                <td>{r.description}</td>
-                <td>
-                  <code style={{ fontSize: 11, color: '#64748b' }}>
-                    {(() => {
-                      try {
-                        const perms = typeof r.permissions === 'string' ? JSON.parse(r.permissions) : r.permissions;
-                        return Array.isArray(perms) ? perms.join(', ') : String(perms);
-                      } catch { return r.permissions; }
-                    })()}
-                  </code>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="card">
-        <h3>Users ({users.length})</h3>
-        {users.length === 0 ? (
-          <p>No users found.</p>
+      <Card title={`Users${users.length ? ` (${users.length})` : ''}`}>
+        {loading ? (
+          <TableSkeleton rows={4} columns={6} />
+        ) : users.length === 0 ? (
+          <EmptyState icon="☰" title="No users" description="This installation has no accounts." />
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Username</th>
-                <th>Email</th>
-                <th>Full Name</th>
-                <th>Roles</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map(u => (
-                <tr key={u.id}>
-                  <td>
-                    <strong>{u.username}</strong>
-                    {u.is_superuser && (
-                      <span style={{ fontSize: 10, marginLeft: 4, color: '#ef4444' }}>SUPER</span>
-                    )}
-                  </td>
-                  <td>{u.email}</td>
-                  <td>{u.full_name || '—'}</td>
-                  <td>
-                    {editingUser?.id === u.id ? (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                        {roles.map(r => (
-                          <label key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                            <input
-                              type="checkbox"
-                              checked={editingUser.role_ids.includes(r.id)}
-                              onChange={() => toggleRole(r.id)}
-                            />
-                            <RoleBadge name={r.name} />
-                          </label>
-                        ))}
-                      </div>
-                    ) : (
-                      (u.roles && u.roles.length > 0)
-                        ? u.roles.map(r => <RoleBadge key={r.id} name={r.name} />)
-                        : <span style={{ color: '#94a3b8', fontSize: 12 }}>—</span>
-                    )}
-                  </td>
-                  <td>
-                    <span style={{
-                      display: 'inline-block', padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600,
-                      background: u.is_active ? '#22c55e' : '#94a3b8', color: '#fff',
-                    }}>
-                      {u.is_active ? 'active' : 'inactive'}
-                    </span>
-                  </td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
-                    {editingUser?.id === u.id ? (
-                      <>
-                        <button className="button" style={{ marginRight: 4 }} onClick={handleSaveRoles}>Save</button>
-                        <button className="button" onClick={() => setEditingUser(null)}>Cancel</button>
-                      </>
-                    ) : (
-                      <>
-                        <button className="button" style={{ marginRight: 4 }}
-                          onClick={() => setEditingUser({ id: u.id, role_ids: u.roles?.map(r => r.id) || [] })}>
-                          Edit Roles
-                        </button>
-                        <button className="button" style={{ marginRight: 4 }}
-                          onClick={() => handleToggleActive(u)}>
-                          {u.is_active ? 'Deactivate' : 'Activate'}
-                        </button>
-                        <button className="button" onClick={() => handleDeleteUser(u)}>Delete</button>
-                      </>
-                    )}
-                  </td>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th scope="col">Username</th>
+                  <th scope="col">Email</th>
+                  <th scope="col">Roles</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Last sign-in</th>
+                  <th scope="col">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {users.map((user) => (
+                  <tr key={user.id}>
+                    <td>
+                      <strong>{user.username}</strong>
+                      {user.id === currentUser?.id && (
+                        <span className="text-small text-muted"> (you)</span>
+                      )}
+                      {user.full_name && (
+                        <div className="text-small text-muted">{user.full_name}</div>
+                      )}
+                    </td>
+                    <td className="text-small">{user.email}</td>
+                    <td>
+                      {user.is_superuser && <Badge tone="danger">superuser</Badge>}
+                      {(user.roles || []).map((role) => <RoleBadge key={role.id} name={role.name} />)}
+                      {!user.is_superuser && (user.roles || []).length === 0 && (
+                        <span className="text-muted text-small">No roles — read nothing</span>
+                      )}
+                    </td>
+                    <td><StatusBadge status={user.is_active ? 'active' : 'inactive'} /></td>
+                    <td className="nowrap" title={formatDateTime(user.last_login_at)}>
+                      {user.last_login_at ? formatRelative(user.last_login_at) : 'Never'}
+                    </td>
+                    <td>
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="button button-secondary button--small"
+                          onClick={() => setEditing(user)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-secondary button--small"
+                          onClick={() => toggleActive(user)}
+                          disabled={busyId === user.id || user.id === currentUser?.id}
+                          title={user.id === currentUser?.id ? 'You cannot deactivate your own account' : undefined}
+                        >
+                          {user.is_active ? 'Deactivate' : 'Activate'}
+                        </button>
+                        <button
+                          type="button"
+                          className="button button-danger button--small"
+                          onClick={() => deleteUser(user)}
+                          disabled={busyId === user.id || user.id === currentUser?.id}
+                          title={user.id === currentUser?.id ? 'You cannot delete your own account' : undefined}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
+      </Card>
+
+      <Card title="Roles" description="Built-in roles and the permissions they grant.">
+        {loading ? (
+          <TableSkeleton rows={3} columns={3} />
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th scope="col">Role</th>
+                  <th scope="col">Description</th>
+                  <th scope="col">Permissions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {roles.map((role) => (
+                  <tr key={role.id}>
+                    <td><RoleBadge name={role.name} /></td>
+                    <td>{role.description}</td>
+                    <td className="text-small text-muted mono">
+                      {Array.isArray(role.permissions) ? role.permissions.join(', ') : String(role.permissions)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {editing && (
+        <UserModal
+          user={editing === 'new' ? null : editing}
+          roles={roles}
+          onClose={() => setEditing(null)}
+          onSaved={(message) => {
+            setEditing(null);
+            toast.success(message);
+            loadData();
+          }}
+          onError={(message) => toast.error(message)}
+        />
+      )}
     </div>
   );
 }
 
-export default Team;
+function UserModal({ user, roles, onClose, onSaved, onError }) {
+  const isEdit = Boolean(user);
+  const [form, setForm] = useState(() => ({
+    username: user?.username || '',
+    email: user?.email || '',
+    full_name: user?.full_name || '',
+    password: '',
+    is_superuser: user?.is_superuser ?? false,
+    role_ids: (user?.roles || []).map((r) => r.id),
+  }));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const toggleRole = (roleId) => {
+    setForm((current) => ({
+      ...current,
+      role_ids: current.role_ids.includes(roleId)
+        ? current.role_ids.filter((id) => id !== roleId)
+        : [...current.role_ids, roleId],
+    }));
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (busy) return;
+
+    // Validate here so a weak password produces a readable message rather than
+    // a raw 422 validation payload.
+    if (!isEdit || form.password) {
+      if (form.password.length < 8) {
+        setError('The password must be at least 8 characters long.');
+        return;
+      }
+      if (!/[a-zA-Z]/.test(form.password) || !/\d/.test(form.password)) {
+        setError('The password must contain at least one letter and one number.');
+        return;
+      }
+    }
+
+    setError(null);
+    setBusy(true);
+    try {
+      if (isEdit) {
+        await teamApi.updateUser(user.id, {
+          email: form.email.trim() || undefined,
+          full_name: form.full_name.trim() || undefined,
+          is_superuser: form.is_superuser,
+          role_ids: form.role_ids,
+          password: form.password || undefined,
+        });
+        onSaved(`Updated ${user.username}.`);
+      } else {
+        await teamApi.register({
+          username: form.username.trim(),
+          email: form.email.trim(),
+          password: form.password,
+          full_name: form.full_name.trim(),
+          role_ids: form.role_ids,
+        });
+        onSaved(`Created ${form.username.trim()}.`);
+      }
+    } catch (err) {
+      onError(apiError(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={isEdit ? `Edit ${user.username}` : 'New user'}
+      description={isEdit ? 'Leave the password blank to keep the current one.' : undefined}
+      onClose={onClose}
+    >
+      <form onSubmit={submit}>
+        {error && (
+          <div className="banner banner--error" role="alert">
+            <span className="banner__message">{error}</span>
+          </div>
+        )}
+
+        <div className="grid-2">
+          <Field label="Username" required={!isEdit}>
+            {(props) => (
+              <input
+                {...props}
+                type="text"
+                value={form.username}
+                onChange={(e) => setForm({ ...form, username: e.target.value })}
+                required={!isEdit}
+                disabled={isEdit}
+                autoFocus={!isEdit}
+                autoComplete="off"
+              />
+            )}
+          </Field>
+          <Field label="Email" required>
+            {(props) => (
+              <input
+                {...props}
+                type="email"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                required
+                autoComplete="off"
+              />
+            )}
+          </Field>
+          <Field label="Full name">
+            {(props) => (
+              <input
+                {...props}
+                type="text"
+                value={form.full_name}
+                onChange={(e) => setForm({ ...form, full_name: e.target.value })}
+                autoComplete="off"
+              />
+            )}
+          </Field>
+          <Field
+            label={isEdit ? 'New password' : 'Password'}
+            required={!isEdit}
+            hint="At least 8 characters, with a letter and a number."
+          >
+            {(props) => (
+              <input
+                {...props}
+                type="password"
+                minLength={8}
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                required={!isEdit}
+                autoComplete="new-password"
+              />
+            )}
+          </Field>
+        </div>
+
+        <fieldset>
+          <legend>Roles</legend>
+          <div className="check-grid">
+            {roles.map((role) => (
+              <div className="checkbox" key={role.id}>
+                <input
+                  id={`role-${role.id}`}
+                  type="checkbox"
+                  checked={form.role_ids.includes(role.id)}
+                  onChange={() => toggleRole(role.id)}
+                />
+                <label htmlFor={`role-${role.id}`}>
+                  {role.name}
+                  {role.description && (
+                    <span className="text-muted text-small"> — {role.description}</span>
+                  )}
+                </label>
+              </div>
+            ))}
+          </div>
+        </fieldset>
+
+        {isEdit && (
+          <Checkbox
+            label="Superuser"
+            hint="Bypasses every permission check. Grant sparingly."
+            checked={form.is_superuser}
+            onChange={(value) => setForm({ ...form, is_superuser: value })}
+          />
+        )}
+
+        <div className="modal__footer">
+          <button type="button" className="button button-secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" className="button" disabled={busy}>
+            {busy ? 'Saving…' : (isEdit ? 'Save changes' : 'Create user')}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}

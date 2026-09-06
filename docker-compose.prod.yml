@@ -54,8 +54,6 @@ services:
     container_name: script-manager-frontend
     expose:
       - 3000
-    environment:
-      - VITE_API_URL=http://localhost/api
     restart: unless-stopped
     networks:
       - script-manager-network

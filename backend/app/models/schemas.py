@@ -247,7 +247,10 @@ class MonitorResponse(BaseModel):
     description: Optional[str]
     expected_interval_seconds: int
     grace_period_seconds: int
-    ping_key: str
+    # Omitted from list and detail responses: the key is the credential that
+    # lets anything forge a heartbeat. Fetch it deliberately from
+    # GET /api/monitors/{id}/ping-url instead.
+    ping_key: Optional[str] = None
     last_ping_at: Optional[UTCDateTime]
     status: str
     notify_channel_ids: List[int] = []

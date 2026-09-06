@@ -27,10 +27,11 @@ A web application for managing large collections of script files. Index, search,
 - **Saved Searches**: Pin and reuse frequently used search queries
 - **Watch Mode**: Automatically detect filesystem changes in real time
 - **Heartbeat Monitors**: Track external cron jobs and services with fail-safe alerts
-- **Schedule Jobs**: Run and manage cron-scheduled commands with execution history
-- **Notifications**: Send alerts via Slack, Discord, email, webhook, PagerDuty, or SMS
-- **Incident Management**: Automatically group and track failures as incidents
-- **Authentication & RBAC**: JWT-based auth with role-based access control (admin, viewer, editor)
+- **Built-in Scheduler**: Runs cron jobs in-process, with retries, overlap prevention, timeouts and full log capture
+- **Notifications**: Real delivery via Slack, Discord, email (SMTP), generic webhook, PagerDuty or Twilio SMS
+- **Incident Management**: Failures raise incidents automatically and resolve on recovery
+- **Authentication & RBAC**: JWT auth enforced on every endpoint, with admin, editor and viewer roles
+- **Dark Mode & Responsive UI**: Follows your system theme, works on phones and tablets
 
 ## Installation Wizard
 
@@ -140,9 +141,17 @@ Heartbeat Monitors track external cron jobs, backup scripts, or any scheduled pr
 
 ### How it works
 
-1. Create a monitor and note the generated `ping_key`
-2. Add a curl call to the end of your cron job: `curl -s https://your-host/api/monitors/ping/<ping_key>`
-3. Script Manager tracks pings and raises an incident if one is missed
+1. Create a monitor. Its ping URL is shown once on creation, and can be fetched
+   again from `GET /api/monitors/{id}/ping-url` or the monitor's detail dialog.
+2. Add a curl call to the end of your cron job:
+   `curl -fsS -m 10 --retry 3 -o /dev/null https://your-host/api/monitors/ping/<ping_key>`
+3. A background task evaluates every monitor on a timer, so an incident is raised
+   and the configured channels are alerted whether or not anyone has the UI open.
+   A monitor that never receives its first ping is measured from its creation time.
+
+The ping endpoint is deliberately unauthenticated: the random ping key is the
+credential, so a cron job needs nothing but the URL. For that reason the key is
+kept out of monitor listings.
 
 ### Monitor API
 
@@ -156,19 +165,32 @@ Heartbeat Monitors track external cron jobs, backup scripts, or any scheduled pr
 | `/api/monitors/ping/{ping_key}` | POST | Record a heartbeat ping |
 | `/api/monitors/{id}/pings` | GET | List recent ping history |
 | `/api/monitors/{id}/incidents` | GET | List incidents for a monitor |
+| `/api/monitors/{id}/ping-url` | GET | Reveal the monitor's ping key |
 
 ## Schedule Jobs
 
-Schedule Jobs let you define cron-scheduled tasks that run shell commands or indexed scripts. Execution history is captured (stdout, stderr, exit code, duration) and performance metrics are available for trend analysis.
+Schedule Jobs let you define cron-scheduled tasks that run shell commands or
+indexed scripts. The backend runs them itself: a background scheduler wakes on a
+timer, fires jobs whose `next_run_at` has passed and records the result. No
+external cron is required.
+
+Execution history is captured (stdout, stderr, exit code, duration) and
+performance metrics are available for trend analysis.
+
+> **Note:** a job runs an arbitrary shell command with the backend's own
+> privileges. Creating, editing and running jobs each require an explicit
+> permission, and only administrators hold them by default.
 
 ### Features
 
-- Cron expression scheduling with timezone support
+- Cron expression scheduling with timezone support, validated on write
+- A live preview of the next few run times while you are editing the schedule
 - Overlap prevention (a job won't start a second instance while still running)
 - Auto-retry on failure (configurable retries and delay)
-- Timeout enforcement
+- Timeout enforcement, which kills the whole process group rather than just the shell
 - Full stdout/stderr capture per execution
-- Notification channel integration (alert on failure or success)
+- Failure raises an incident and alerts the job's notification channels
+- Executions stranded by a backend restart are reaped on the next start
 
 ### Schedule API
 
@@ -182,6 +204,7 @@ Schedule Jobs let you define cron-scheduled tasks that run shell commands or ind
 | `/api/schedules/{id}/trigger` | POST | Manually trigger a job immediately |
 | `/api/schedules/{id}/executions` | GET | List execution history |
 | `/api/schedules/{id}/metrics` | GET | Performance metrics for a job |
+| `/api/schedules/preview/cron` | GET | Validate an expression and preview its next runs |
 
 ## Notifications
 
@@ -191,12 +214,12 @@ Notification Channels deliver alerts when monitors fail, schedule jobs error, or
 
 | Type | Description |
 |------|-------------|
-| `slack` | Post messages to a Slack channel via Incoming Webhooks or Bot tokens |
+| `slack` | Post messages to a Slack channel via an Incoming Webhook (`webhook_url`) |
 | `discord` | Send messages to a Discord channel via webhooks |
-| `email` | Send SMTP email notifications |
+| `email` | SMTP email (`smtp_host`, `smtp_port`, `to`, optional `smtp_user`/`smtp_pass`) |
 | `webhook` | HTTP POST to any generic webhook URL |
 | `pagerduty` | Create PagerDuty incidents via Events API v2 |
-| `sms` | SMS via Twilio (account_sid + auth_token) |
+| `sms` | SMS via Twilio (`account_sid`, `auth_token`, `from`, `to`) |
 
 ### Notifications API
 
@@ -204,23 +227,55 @@ Notification Channels deliver alerts when monitors fail, schedule jobs error, or
 |----------|--------|-------------|
 | `/api/notifications/channels/` | GET / POST | List or create channels |
 | `/api/notifications/channels/{id}` | GET / PUT / DELETE | Read, update, or delete a channel |
-| `/api/notifications/channels/{id}/test` | POST | Send a test notification (auth required) |
+| `/api/notifications/channels/types` | GET | Describe each channel type's config fields |
+| `/api/notifications/channels/{id}/test` | POST | Send a real test message and report the result |
+| `/api/notifications/incidents/stats` | GET | Incident counts by status and severity |
 | `/api/notifications/incidents/` | GET | List all incidents |
 | `/api/notifications/incidents/{id}` | GET / PUT / DELETE | Read, update, or delete an incident |
 
-> **Security note:** Secret config keys (`token`, `webhook_url`, `auth_token`, etc.) are always redacted (`***`) in API responses.
+A channel's configuration is validated when it is saved, so a channel that could
+never deliver is rejected rather than failing silently at alert time. "Send test"
+performs a real delivery and reports the provider's response.
+
+> **Security note:** secret config keys (`webhook_url`, `token`, `auth_token`,
+> `routing_key`, `smtp_pass`, ...) are never returned by the API; they appear as
+> `***`. Submitting `***` back on an update keeps the stored value, so editing a
+> channel's name cannot wipe its credentials.
 
 ## Authentication & RBAC
 
-Script Manager uses **JWT Bearer tokens** for authentication and **role-based access control** for authorization.
+Script Manager uses **JWT Bearer tokens** for authentication and **role-based
+access control** for authorization. Every API endpoint is gated except the setup
+wizard, the login and auth-config endpoints, `/health`, and the monitor ping
+endpoint (whose secret key is its own credential).
+
+Set `REQUIRE_AUTH=false` to open the API for a local single-user setup; it is on
+by default.
+
+### Signing key
+
+`SECRET_KEY` signs access tokens. Leave it unset and the backend generates a
+random key on first start and persists it beside the database. Set it explicitly
+whenever you run more than one backend process, since all workers must agree.
+
+### Accounts
+
+The setup wizard creates the first administrator. After that, administrators
+create accounts from the Team page. Anonymous self-registration is off unless
+`ALLOW_SELF_REGISTRATION=true`. The last remaining administrator cannot be
+deleted, deactivated or demoted, so an installation cannot be locked out.
 
 ### Default Roles
 
 | Role | Permissions |
 |------|-------------|
-| `admin` | Full access — manage users, roles, and all resources |
-| `editor` | Create, update, and delete scripts, tags, notes, and searches |
-| `viewer` | Read-only access to scripts and tags |
+| `admin` | Full access — manage users, roles, and every resource |
+| `editor` | Create, update and delete scripts, tags, notes, searches, folder roots, monitors and schedules |
+| `viewer` | Read-only access across the application |
+
+Permissions are named `<resource>.<action>`, and `<resource>.*` or `superuser`
+act as wildcards. The UI hides whatever the signed-in account cannot reach, so a
+viewer is never shown a button the API would refuse.
 
 ### Auth API
 
@@ -229,7 +284,8 @@ Script Manager uses **JWT Bearer tokens** for authentication and **role-based ac
 | `/api/auth/login` | POST | Log in and receive an access token (form data) |
 | `/api/auth/me` | GET | Get the current authenticated user |
 | `/api/auth/register` | POST | Register a new user (admin only) |
-| `/api/auth/change-password` | PUT | Change password for the current user |
+| `/api/auth/change-password` | PUT | Change the current user's password (JSON body) |
+| `/api/auth/config` | GET | Public: whether auth is enforced and self-registration is on |
 | `/api/auth/users` | GET | List all users (admin only) |
 | `/api/auth/roles` | GET | List all roles |
 
@@ -448,10 +504,27 @@ When running with Docker Compose, the following services are orchestrated:
 
 ## Configuration
 
-Configuration options can be set via environment variables:
+Configuration is read from environment variables. `.env.example` at the
+repository root documents every option; the ones you are most likely to set are:
 
-- `DATABASE_PATH`: Path to SQLite database (default: `./data/scripts.db`)
-- `API_PORT`: Backend API port (default: `8000`)
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DATABASE_PATH` | `./data/scripts.db` | SQLite database file |
+| `API_PORT` | `8000` | Backend listen port |
+| `SECRET_KEY` | generated | JWT signing key. Required when running more than one backend process |
+| `REQUIRE_AUTH` | `true` | Enforce authentication and RBAC on the API |
+| `ALLOW_SELF_REGISTRATION` | `false` | Let anonymous visitors create accounts |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `1440` | Access-token lifetime |
+| `ALLOWED_ORIGINS` | `localhost:3000,localhost:5173` | CORS origins, when the UI is on another origin |
+| `ENABLE_SCHEDULER` | `true` | Run due jobs and evaluate monitors in this process |
+| `SCHEDULER_TICK_SECONDS` | `30` | How often the scheduler wakes up |
+| `ATTACHMENTS_DIR` | `./data/attachments` | Where uploaded attachments are stored |
+| `MAX_ATTACHMENT_SIZE` | `10485760` | Per-file upload limit, in bytes |
+| `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `text` | Logging verbosity and format (`json` for aggregation) |
+
+Run the scheduler in exactly one process. If you scale the backend
+horizontally, set `ENABLE_SCHEDULER=false` on every replica but one, or jobs
+will run more than once per schedule.
 
 ## API Reference
 
@@ -475,7 +548,15 @@ The full interactive API documentation is available at **http://localhost:8000/d
 | `/api/watch` | Real-time filesystem watch mode |
 | `/api/monitors` | Heartbeat monitor management |
 | `/api/schedules` | Scheduled job management |
+| `/api/folders` | Folder tree and per-folder notes |
 | `/api/notifications` | Notification channels and incidents |
+
+Every endpoint requires a bearer token and the matching permission, except
+`/api/setup/*`, `/api/auth/login`, `/api/auth/config`, `/health`, and
+`POST /api/monitors/ping/{ping_key}`.
+
+Interactive API documentation is served at `/docs` (OpenAPI) once the backend
+is running.
 
 ## Documentation
 
