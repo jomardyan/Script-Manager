@@ -1,12 +1,16 @@
 """
 Script scanning and indexing service
 """
-import os
+import asyncio
 import hashlib
-from pathlib import Path
-from datetime import datetime
-from typing import List, Dict, Optional, Tuple
 import fnmatch
+import logging
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Language detection based on extensions
 EXTENSION_LANGUAGE_MAP = {
@@ -77,85 +81,128 @@ def match_patterns(path: str, patterns: Optional[str]) -> bool:
             return True
     return False
 
-async def scan_directory(
+def _scan_directory_sync(
     root_path: str,
     recursive: bool = True,
     include_patterns: Optional[str] = None,
     exclude_patterns: Optional[str] = None,
     follow_symlinks: bool = False,
-    max_file_size: int = 10485760
-) -> List[Dict]:
-    """
-    Scan directory for script files
-    Returns list of file metadata dictionaries
-    """
-    scripts = []
+    max_file_size: int = 10485760,
+) -> Tuple[List[Dict], List[str]]:
+    """Blocking directory walk. Returns (script metadata, folder paths)."""
+    scripts: List[Dict] = []
+    folders: List[str] = []
     root_path_obj = Path(root_path)
-    
+
     if not root_path_obj.exists():
         raise ValueError(f"Path does not exist: {root_path}")
-    
+
     if not root_path_obj.is_dir():
         raise ValueError(f"Path is not a directory: {root_path}")
-    
+
+    # Following symlinks can otherwise walk a cycle forever; track real paths.
+    visited: Set[str] = set()
+
     def scan_path(path: Path):
         try:
-            for item in path.iterdir():
+            real = os.path.realpath(path)
+            if real in visited:
+                return
+            visited.add(real)
+
+            for item in sorted(path.iterdir(), key=lambda p: p.name):
                 # Skip if exclude pattern matches
                 if exclude_patterns and match_patterns(str(item), exclude_patterns):
                     continue
-                
+
                 # Handle symlinks
                 if item.is_symlink() and not follow_symlinks:
                     continue
-                
+
                 # Recursively scan directories
                 if item.is_dir():
+                    folders.append(str(item.absolute()))
                     if recursive:
                         scan_path(item)
                     continue
-                
+
                 # Process files
                 if item.is_file():
-                    # Check if it's a script file
                     if not is_script_file(str(item)):
                         continue
-                    
-                    # Check include patterns
+
                     if include_patterns and not match_patterns(str(item), include_patterns):
                         continue
-                    
-                    # Check file size
-                    try:
-                        file_size = item.stat().st_size
-                        if file_size > max_file_size:
-                            continue
-                    except Exception:
-                        continue
-                    
-                    # Get file metadata
+
                     try:
                         stat = item.stat()
+                    except OSError:
+                        continue
+
+                    # Hashing and line counting read the whole file, so the
+                    # size limit has to be checked before either runs.
+                    if stat.st_size > max_file_size:
+                        continue
+
+                    try:
                         scripts.append({
                             'path': str(item.absolute()),
                             'name': item.name,
                             'extension': item.suffix.lower(),
                             'language': detect_language(str(item)),
                             'size': stat.st_size,
-                            'mtime': datetime.fromtimestamp(stat.st_mtime),
+                            'mtime': datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
                             'hash': get_file_hash(str(item)),
-                            'line_count': get_line_count(str(item))
+                            'line_count': get_line_count(str(item)),
                         })
-                    except Exception as e:
-                        print(f"Error processing file {item}: {e}")
+                    except OSError as exc:
+                        logger.warning("Error processing file %s: %s", item, exc)
                         continue
         except PermissionError:
-            print(f"Permission denied: {path}")
-        except Exception as e:
-            print(f"Error scanning {path}: {e}")
-    
+            logger.warning("Permission denied while scanning %s", path)
+        except OSError as exc:
+            logger.warning("Error scanning %s: %s", path, exc)
+
     scan_path(root_path_obj)
+    return scripts, folders
+
+
+async def scan_directory(
+    root_path: str,
+    recursive: bool = True,
+    include_patterns: Optional[str] = None,
+    exclude_patterns: Optional[str] = None,
+    follow_symlinks: bool = False,
+    max_file_size: int = 10485760,
+) -> List[Dict]:
+    """
+    Scan a directory for script files.
+
+    The walk is blocking (stat, hashing, line counts), so it runs in a worker
+    thread; running it inline would freeze the whole API for the duration of
+    a large scan.
+    """
+    scripts, _folders = await asyncio.to_thread(
+        _scan_directory_sync, root_path, recursive, include_patterns,
+        exclude_patterns, follow_symlinks, max_file_size,
+    )
     return scripts
+
+
+async def scan_directory_detailed(
+    root_path: str,
+    recursive: bool = True,
+    include_patterns: Optional[str] = None,
+    exclude_patterns: Optional[str] = None,
+    follow_symlinks: bool = False,
+    max_file_size: int = 10485760,
+) -> Tuple[List[Dict], List[str]]:
+    """Like scan_directory but also returns the folders encountered."""
+    return await asyncio.to_thread(
+        _scan_directory_sync, root_path, recursive, include_patterns,
+        exclude_patterns, follow_symlinks, max_file_size,
+    )
+
 
 async def get_duplicate_scripts(db) -> List[Dict]:
     """Find scripts with duplicate content hashes"""

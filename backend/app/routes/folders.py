@@ -7,10 +7,14 @@ import aiosqlite
 
 from app.db.database import get_db
 from app.models.schemas import FolderResponse, FolderNoteUpdate
+from app.routes.deps import require_permission
 
 router = APIRouter()
 
-@router.get("/", response_model=List[FolderResponse])
+read_access = Depends(require_permission("folders.read"))
+update_access = Depends(require_permission("folders.update"))
+
+@router.get("/", response_model=List[FolderResponse], dependencies=[read_access])
 async def list_folders(
     root_id: int = None,
     db: aiosqlite.Connection = Depends(get_db)
@@ -27,7 +31,7 @@ async def list_folders(
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
-@router.get("/{folder_id}", response_model=FolderResponse)
+@router.get("/{folder_id}", response_model=FolderResponse, dependencies=[read_access])
 async def get_folder(folder_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Get a specific folder"""
     async with db.execute("SELECT * FROM folders WHERE id = ?", (folder_id,)) as cursor:
@@ -36,7 +40,7 @@ async def get_folder(folder_id: int, db: aiosqlite.Connection = Depends(get_db))
             raise HTTPException(status_code=404, detail="Folder not found")
         return dict(row)
 
-@router.put("/{folder_id}/note")
+@router.put("/{folder_id}/note", dependencies=[update_access])
 async def update_folder_note(
     folder_id: int,
     note_update: FolderNoteUpdate,
@@ -57,7 +61,7 @@ async def update_folder_note(
     
     return {"message": "Folder note updated successfully"}
 
-@router.delete("/{folder_id}/note")
+@router.delete("/{folder_id}/note", dependencies=[update_access])
 async def delete_folder_note(folder_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Delete a folder note"""
     # Check if folder exists
@@ -74,7 +78,7 @@ async def delete_folder_note(folder_id: int, db: aiosqlite.Connection = Depends(
     
     return {"message": "Folder note deleted successfully"}
 
-@router.get("/tree/{root_id}")
+@router.get("/tree/{root_id}", dependencies=[read_access])
 async def get_folder_tree(root_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Get folder tree for a specific root in hierarchical structure"""
     # Get all folders for this root

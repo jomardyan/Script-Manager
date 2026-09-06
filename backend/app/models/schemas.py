@@ -1,9 +1,26 @@
 """
 Pydantic models for API request/response
 """
-from pydantic import BaseModel, Field
-from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Annotated, List, Literal, Optional
+
+from pydantic import AfterValidator, BaseModel, EmailStr, Field
+
+
+def _as_utc(value: datetime) -> datetime:
+    """
+    Treat a naive timestamp as UTC and always serialize with an offset.
+
+    SQLite's CURRENT_TIMESTAMP writes naive UTC strings. Serialized without an
+    offset, `new Date(value)` in the browser parses them as local time, so
+    every timestamp in the UI was shifted by the viewer's UTC offset.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+UTCDateTime = Annotated[datetime, AfterValidator(_as_utc)]
 
 class FolderRootCreate(BaseModel):
     path: str
@@ -27,9 +44,21 @@ class FolderRootResponse(BaseModel):
     max_file_size: int
     enable_content_indexing: bool
     enable_watch_mode: bool
-    last_scan_time: Optional[datetime]
-    created_at: datetime
-    updated_at: datetime
+    last_scan_time: Optional[UTCDateTime]
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
+
+class FolderRootUpdate(BaseModel):
+    """Partial update for a folder root. The path is immutable: changing it
+    would orphan every script already indexed under the old location."""
+    name: Optional[str] = None
+    recursive: Optional[bool] = None
+    include_patterns: Optional[str] = None
+    exclude_patterns: Optional[str] = None
+    follow_symlinks: Optional[bool] = None
+    max_file_size: Optional[int] = None
+    enable_content_indexing: Optional[bool] = None
+    enable_watch_mode: Optional[bool] = None
 
 class ScriptResponse(BaseModel):
     id: int
@@ -40,18 +69,18 @@ class ScriptResponse(BaseModel):
     extension: Optional[str]
     language: Optional[str]
     size: Optional[int]
-    mtime: Optional[datetime]
+    mtime: Optional[UTCDateTime]
     hash: Optional[str]
     line_count: Optional[int]
     missing_flag: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
     tags: List[str] = []
     status: Optional[str] = None
     classification: Optional[str] = None
     owner: Optional[str] = None
     environment: Optional[str] = None
-    deprecated_date: Optional[datetime] = None
+    deprecated_date: Optional[UTCDateTime] = None
     migration_note: Optional[str] = None
     notes: Optional[str] = None
 
@@ -62,7 +91,7 @@ class ScriptListResponse(BaseModel):
     extension: Optional[str]
     language: Optional[str]
     size: Optional[int]
-    mtime: Optional[datetime]
+    mtime: Optional[UTCDateTime]
     status: Optional[str]
     tags: List[str] = []
 
@@ -76,7 +105,7 @@ class TagResponse(BaseModel):
     name: str
     group_name: Optional[str]
     color: Optional[str]
-    created_at: datetime
+    created_at: UTCDateTime
 
 class NoteCreate(BaseModel):
     content: str
@@ -87,15 +116,21 @@ class NoteResponse(BaseModel):
     script_id: int
     content: str
     is_markdown: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
+
+# The lifecycle states the UI offers and the docs describe. Typing the field
+# means an unknown value is rejected with a 422 instead of being stored and
+# then never matching any filter.
+ScriptStatus = Literal["active", "draft", "deprecated", "archived"]
+
 
 class StatusUpdate(BaseModel):
-    status: Optional[str] = None
+    status: Optional[ScriptStatus] = None
     classification: Optional[str] = None
     owner: Optional[str] = None
     environment: Optional[str] = None
-    deprecated_date: Optional[datetime] = None
+    deprecated_date: Optional[UTCDateTime] = None
     migration_note: Optional[str] = None
 
 class ScanRequest(BaseModel):
@@ -108,8 +143,8 @@ class ScanResponse(BaseModel):
     updated_count: int
     deleted_count: int
     error_count: int
-    started_at: datetime
-    ended_at: Optional[datetime]
+    started_at: UTCDateTime
+    ended_at: Optional[UTCDateTime]
 
 class SearchRequest(BaseModel):
     query: Optional[str] = None
@@ -122,8 +157,8 @@ class SearchRequest(BaseModel):
     classification: Optional[str] = None
     min_size: Optional[int] = None
     max_size: Optional[int] = None
-    modified_after: Optional[datetime] = None
-    modified_before: Optional[datetime] = None
+    modified_after: Optional[UTCDateTime] = None
+    modified_before: Optional[UTCDateTime] = None
     sort_by: str = "name"
     sort_order: str = "asc"
     page: int = 1
@@ -142,7 +177,7 @@ class FolderResponse(BaseModel):
     path: str
     parent_id: Optional[int]
     note: Optional[str]
-    created_at: datetime
+    created_at: UTCDateTime
 
 class FolderNoteUpdate(BaseModel):
     note: str
@@ -153,10 +188,15 @@ class BulkTagRequest(BaseModel):
 
 class BulkStatusRequest(BaseModel):
     script_ids: List[int]
-    status: Optional[str] = None
+    status: Optional[ScriptStatus] = None
     classification: Optional[str] = None
     owner: Optional[str] = None
     environment: Optional[str] = None
+
+class ExportRequest(BaseModel):
+    """Body for POST /api/scripts/export. Omit script_ids to export everything."""
+    script_ids: Optional[List[int]] = None
+
 
 class SavedSearchCreate(BaseModel):
     name: str
@@ -170,8 +210,8 @@ class SavedSearchResponse(BaseModel):
     description: Optional[str]
     query_params: dict
     is_pinned: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
 
 class FTSSearchRequest(BaseModel):
     query: str
@@ -189,16 +229,16 @@ class AttachmentResponse(BaseModel):
     file_path: str
     file_size: int
     mime_type: Optional[str]
-    created_at: datetime
+    created_at: UTCDateTime
 
 
 # ── Heartbeat Monitors ──────────────────────────────────────────────────────
 
 class MonitorCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=200)
     description: Optional[str] = None
-    expected_interval_seconds: int = 300
-    grace_period_seconds: int = 60
+    expected_interval_seconds: int = Field(default=300, ge=10, le=2678400)
+    grace_period_seconds: int = Field(default=60, ge=0, le=2678400)
     notify_channel_ids: List[int] = []
 
 class MonitorResponse(BaseModel):
@@ -208,17 +248,17 @@ class MonitorResponse(BaseModel):
     expected_interval_seconds: int
     grace_period_seconds: int
     ping_key: str
-    last_ping_at: Optional[datetime]
+    last_ping_at: Optional[UTCDateTime]
     status: str
     notify_channel_ids: List[int] = []
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
 
 class MonitorUpdate(BaseModel):
-    name: Optional[str] = None
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     description: Optional[str] = None
-    expected_interval_seconds: Optional[int] = None
-    grace_period_seconds: Optional[int] = None
+    expected_interval_seconds: Optional[int] = Field(default=None, ge=10, le=2678400)
+    grace_period_seconds: Optional[int] = Field(default=None, ge=0, le=2678400)
     notify_channel_ids: Optional[List[int]] = None
 
 
@@ -232,10 +272,11 @@ class ScheduleJobCreate(BaseModel):
     cron_expression: str
     timezone: str = "UTC"
     enabled: bool = True
-    max_retries: int = 0
-    retry_delay_seconds: int = 60
+    max_retries: int = Field(default=0, ge=0, le=10)
+    retry_delay_seconds: int = Field(default=60, ge=1, le=86400)
     prevent_overlap: bool = True
-    timeout_seconds: Optional[int] = None
+    # ge=1 so timeout_seconds=0 cannot silently mean "no timeout".
+    timeout_seconds: Optional[int] = Field(default=None, ge=1, le=86400)
     notify_channel_ids: List[int] = []
 
 class ScheduleJobResponse(BaseModel):
@@ -252,11 +293,11 @@ class ScheduleJobResponse(BaseModel):
     prevent_overlap: bool
     timeout_seconds: Optional[int]
     notify_channel_ids: List[int] = []
-    last_run_at: Optional[datetime]
-    next_run_at: Optional[datetime]
+    last_run_at: Optional[UTCDateTime]
+    next_run_at: Optional[UTCDateTime]
     last_status: Optional[str]
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
 
 class ScheduleJobUpdate(BaseModel):
     name: Optional[str] = None
@@ -266,17 +307,17 @@ class ScheduleJobUpdate(BaseModel):
     cron_expression: Optional[str] = None
     timezone: Optional[str] = None
     enabled: Optional[bool] = None
-    max_retries: Optional[int] = None
-    retry_delay_seconds: Optional[int] = None
+    max_retries: Optional[int] = Field(default=None, ge=0, le=10)
+    retry_delay_seconds: Optional[int] = Field(default=None, ge=1, le=86400)
     prevent_overlap: Optional[bool] = None
-    timeout_seconds: Optional[int] = None
+    timeout_seconds: Optional[int] = Field(default=None, ge=1, le=86400)
     notify_channel_ids: Optional[List[int]] = None
 
 class JobExecutionResponse(BaseModel):
     id: int
     job_id: int
-    started_at: datetime
-    ended_at: Optional[datetime]
+    started_at: UTCDateTime
+    ended_at: Optional[UTCDateTime]
     status: str
     exit_code: Optional[int]
     stdout: Optional[str]
@@ -300,8 +341,8 @@ class NotificationChannelResponse(BaseModel):
     type: str
     config: dict
     enabled: bool
-    created_at: datetime
-    updated_at: datetime
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
 
 class NotificationChannelUpdate(BaseModel):
     name: Optional[str] = None
@@ -320,11 +361,11 @@ class IncidentResponse(BaseModel):
     status: str
     severity: str
     description: Optional[str]
-    acknowledged_at: Optional[datetime]
+    acknowledged_at: Optional[UTCDateTime]
     acknowledged_by: Optional[str]
-    resolved_at: Optional[datetime]
-    created_at: datetime
-    updated_at: datetime
+    resolved_at: Optional[UTCDateTime]
+    created_at: UTCDateTime
+    updated_at: UTCDateTime
 
 class IncidentUpdate(BaseModel):
     status: Optional[str] = None
@@ -336,11 +377,27 @@ class IncidentUpdate(BaseModel):
 # ── User management request bodies ──────────────────────────────────────────
 
 class UserRegister(BaseModel):
-    username: str
-    email: str
-    password: str
-    full_name: Optional[str] = None
+    username: str = Field(min_length=1, max_length=64)
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=256)
+    full_name: Optional[str] = Field(default=None, max_length=200)
+    # Honoured only for requests made by an administrator.
+    role_ids: Optional[List[int]] = None
 
 class UserUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = Field(default=None, max_length=200)
     is_active: Optional[bool] = None
+    is_superuser: Optional[bool] = None
     role_ids: Optional[List[int]] = None
+    # Admin-initiated password reset.
+    password: Optional[str] = Field(default=None, min_length=8, max_length=256)
+
+class PasswordChange(BaseModel):
+    """Body for PUT /api/auth/change-password.
+
+    Credentials belong in the body: as query parameters they end up in access
+    logs, browser history and proxy caches.
+    """
+    old_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=8, max_length=256)

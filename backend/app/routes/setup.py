@@ -3,6 +3,7 @@ Setup Wizard API endpoints for first-time installation
 """
 import json
 import os
+import secrets
 import tempfile
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -206,9 +207,37 @@ async def get_setup_status(db: aiosqlite.Connection = Depends(get_db)):
     return {"setup_completed": False, "mode": None}
 
 
+async def _create_admin(db: aiosqlite.Connection, username: str, email: str,
+                        password: str, full_name: Optional[str] = None) -> Optional[int]:
+    """Create a superuser account with the admin role, or return None if taken."""
+    from app.services.auth import get_password_hash
+
+    async with db.execute(
+        "SELECT id FROM users WHERE username = ? OR email = ?", (username, email)
+    ) as cursor:
+        if await cursor.fetchone():
+            return None
+
+    cursor = await db.execute(
+        """INSERT INTO users
+           (username, email, full_name, hashed_password, is_active, is_superuser)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (username, email, full_name, get_password_hash(password), True, True),
+    )
+    user_id = cursor.lastrowid
+    async with db.execute("SELECT id FROM roles WHERE name = ?", ("admin",)) as cur:
+        role_row = await cur.fetchone()
+    if role_row:
+        await db.execute(
+            "INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)",
+            (user_id, role_row[0]),
+        )
+    return user_id
+
+
 @router.post("/demo")
 async def start_demo_mode(db: aiosqlite.Connection = Depends(get_db)):
-    """Activate demo mode and seed sample data."""
+    """Activate demo mode, seed sample data and create a demo administrator."""
     # Reject if setup has already been completed
     async with db.execute(
         "SELECT value FROM app_settings WHERE key = 'setup_completed'"
@@ -222,9 +251,24 @@ async def start_demo_mode(db: aiosqlite.Connection = Depends(get_db)):
 
     await _save_setting(db, "app_mode", "demo")
     await _seed_demo_data(db)
+
+    # Demo mode previously finished with zero user accounts, so nobody could
+    # sign in to the API it had just enabled. Create a demo administrator and
+    # hand its one-time password back for the wizard to display.
+    demo_password = secrets.token_urlsafe(12)
+    created = await _create_admin(
+        db, "demo", "demo@example.com", demo_password, "Demo Administrator"
+    )
     await _save_setting(db, "setup_completed", "true")
     await db.commit()
-    return {"message": "Demo mode activated", "mode": "demo"}
+
+    return {
+        "message": "Demo mode activated",
+        "mode": "demo",
+        "credentials": (
+            {"username": "demo", "password": demo_password} if created else None
+        ),
+    }
 
 
 @router.post("/complete")
@@ -269,7 +313,7 @@ async def complete_setup(
         await _seed_demo_data(db)
     else:
         # Create admin account for production / development
-        from app.services.auth import get_password_hash, validate_password_strength
+        from app.services.auth import validate_password_strength
 
         is_valid, error_msg = validate_password_strength(config.admin.password)
         if not is_valid:
@@ -282,31 +326,13 @@ async def complete_setup(
             existing = await cursor.fetchone()
 
         if not existing:
-            hashed = get_password_hash(config.admin.password)
-            cur = await db.execute(
-                """INSERT INTO users
-                   (username, email, full_name, hashed_password, is_active, is_superuser)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (
-                    config.admin.username,
-                    config.admin.email,
-                    config.admin.full_name,
-                    hashed,
-                    True,
-                    True,
-                ),
+            await _create_admin(
+                db,
+                config.admin.username,
+                config.admin.email,
+                config.admin.password,
+                config.admin.full_name,
             )
-            user_id = cur.lastrowid
-            # Assign admin role
-            async with db.execute(
-                "SELECT id FROM roles WHERE name = ?", ("admin",)
-            ) as cur2:
-                role_row = await cur2.fetchone()
-            if role_row:
-                await db.execute(
-                    "INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)",
-                    (user_id, role_row[0]),
-                )
 
     await _save_setting(db, "setup_completed", "true")
     await db.commit()

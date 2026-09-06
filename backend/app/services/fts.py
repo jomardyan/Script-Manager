@@ -1,8 +1,11 @@
 """
 Full-Text Search (FTS5) service
 """
-import aiosqlite
 from typing import Dict
+
+import aiosqlite
+
+from app.db.sql import TAGS_SUBQUERY, split_tags
 
 
 async def index_script_content(db: aiosqlite.Connection, script_id: int, name: str, path: str, content: str = "", notes: str = ""):
@@ -58,6 +61,33 @@ async def update_script_notes_fts(db: aiosqlite.Connection, script_id: int):
     await db.commit()
 
 
+def build_match_expression(query: str, search_content: bool, search_notes: bool) -> str:
+    """
+    Turn user input into a safe FTS5 MATCH expression.
+
+    The query is quoted as a phrase so FTS5 operators the user typed (AND, OR,
+    NEAR, ``*``, ``:``, unbalanced quotes) are matched literally instead of
+    raising a syntax error or changing the meaning of the search.
+
+    The column filter is what makes ``search_content`` and ``search_notes``
+    actually do something: previously both flags were computed and then
+    ignored, so every search matched content and notes regardless.
+    """
+    columns = ["name", "path"]
+    if search_content:
+        columns.append("content")
+    if search_notes:
+        columns.append("notes")
+
+    escaped = (query or "").replace('"', '""').strip()
+    if not escaped:
+        raise ValueError("Search query cannot be empty")
+
+    phrase = f'"{escaped}"'
+    # {col1 col2} : <phrase> restricts the match to those columns.
+    return "{" + " ".join(columns) + "} : " + phrase
+
+
 async def search_fts(
     db: aiosqlite.Connection,
     query: str,
@@ -67,74 +97,61 @@ async def search_fts(
     page_size: int = 50
 ) -> Dict:
     """
-    Perform full-text search across scripts
-    Returns paginated results with match ranks
+    Perform full-text search across scripts.
+    Returns paginated results with match ranks.
     """
-    # Build search columns
-    search_cols = ["name", "path"]
-    if search_content:
-        search_cols.append("content")
-    if search_notes:
-        search_cols.append("notes")
-    
-    # Build FTS query - sanitize for FTS5 syntax
-    # Wrap query in quotes to treat as phrase and escape special chars
-    fts_query = query.replace('"', '""')  # Escape double quotes
-    # Wrap in quotes for phrase matching, which prevents FTS5 syntax injection
-    fts_query = f'"{fts_query}"'
-    
-    # Count total results
-    count_query = f"""
+    fts_query = build_match_expression(query, search_content, search_notes)
+
+    count_query = """
         SELECT COUNT(DISTINCT fts.script_id)
         FROM scripts_fts fts
-        WHERE scripts_fts MATCH ?
+        JOIN scripts s ON fts.script_id = s.id
+        WHERE scripts_fts MATCH ? AND s.missing_flag = 0
     """
     async with db.execute(count_query, (fts_query,)) as cursor:
         total = (await cursor.fetchone())[0]
-    
-    # Get paginated results with ranking
+
     offset = (page - 1) * page_size
-    search_query = """
-        SELECT DISTINCT 
+    search_query = f"""
+        SELECT
             fts.script_id,
             s.name,
             s.path,
+            s.extension,
             s.language,
             s.size,
             s.mtime,
             st.status,
-            GROUP_CONCAT(DISTINCT t.name) as tags,
+            {TAGS_SUBQUERY} AS tags,
             rank
         FROM scripts_fts fts
         JOIN scripts s ON fts.script_id = s.id
         LEFT JOIN script_status st ON s.id = st.script_id
-        LEFT JOIN script_tags sct ON s.id = sct.script_id
-        LEFT JOIN tags t ON sct.tag_id = t.id
-        WHERE scripts_fts MATCH ?
+        WHERE scripts_fts MATCH ? AND s.missing_flag = 0
         GROUP BY fts.script_id
         ORDER BY rank
         LIMIT ? OFFSET ?
     """
-    
+
     async with db.execute(search_query, (fts_query, page_size, offset)) as cursor:
         rows = await cursor.fetchall()
         items = []
         for row in rows:
-            item = {
+            items.append({
                 'id': row[0],
                 'name': row[1],
                 'path': row[2],
-                'language': row[3],
-                'size': row[4],
-                'mtime': row[5],
-                'status': row[6],
-                'tags': row[7].split(',') if row[7] else [],
-                'rank': row[8]
-            }
-            items.append(item)
-    
+                'extension': row[3],
+                'language': row[4],
+                'size': row[5],
+                'mtime': row[6],
+                'status': row[7],
+                'tags': split_tags(row[8]),
+                'rank': row[9],
+            })
+
     total_pages = (total + page_size - 1) // page_size
-    
+
     return {
         'items': items,
         'total': total,
@@ -142,6 +159,11 @@ async def search_fts(
         'page_size': page_size,
         'total_pages': total_pages
     }
+
+
+async def remove_from_index(db: aiosqlite.Connection, script_id: int):
+    """Drop a script from the FTS index (used when it is deleted or goes missing)."""
+    await db.execute("DELETE FROM scripts_fts WHERE script_id = ?", (script_id,))
 
 
 async def rebuild_fts_index(db: aiosqlite.Connection, root_id: int = None):

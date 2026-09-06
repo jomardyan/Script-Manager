@@ -7,17 +7,22 @@ import aiosqlite
 
 from app.db.database import get_db
 from app.models.schemas import TagCreate, TagResponse
+from app.routes.deps import require_permission
 
 router = APIRouter()
 
-@router.get("/", response_model=List[TagResponse])
+read_access = Depends(require_permission("tags.read"))
+create_access = Depends(require_permission("tags.create"))
+delete_access = Depends(require_permission("tags.delete"))
+
+@router.get("/", response_model=List[TagResponse], dependencies=[read_access])
 async def list_tags(db: aiosqlite.Connection = Depends(get_db)):
     """List all tags"""
     async with db.execute("SELECT * FROM tags ORDER BY name") as cursor:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
-@router.post("/", response_model=TagResponse)
+@router.post("/", response_model=TagResponse, status_code=201, dependencies=[create_access])
 async def create_tag(tag: TagCreate, db: aiosqlite.Connection = Depends(get_db)):
     """Create a new tag"""
     try:
@@ -36,7 +41,7 @@ async def create_tag(tag: TagCreate, db: aiosqlite.Connection = Depends(get_db))
     except aiosqlite.IntegrityError:
         raise HTTPException(status_code=400, detail="Tag with this name already exists")
 
-@router.get("/{tag_id}", response_model=TagResponse)
+@router.get("/{tag_id}", response_model=TagResponse, dependencies=[read_access])
 async def get_tag(tag_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Get a specific tag"""
     async with db.execute("SELECT * FROM tags WHERE id = ?", (tag_id,)) as cursor:
@@ -45,7 +50,7 @@ async def get_tag(tag_id: int, db: aiosqlite.Connection = Depends(get_db)):
             raise HTTPException(status_code=404, detail="Tag not found")
         return dict(row)
 
-@router.delete("/{tag_id}")
+@router.delete("/{tag_id}", dependencies=[delete_access])
 async def delete_tag(tag_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Delete a tag"""
     async with db.execute("SELECT * FROM tags WHERE id = ?", (tag_id,)) as cursor:
@@ -56,7 +61,7 @@ async def delete_tag(tag_id: int, db: aiosqlite.Connection = Depends(get_db)):
     await db.commit()
     return {"message": "Tag deleted successfully"}
 
-@router.get("/{tag_id}/scripts")
+@router.get("/{tag_id}/scripts", dependencies=[read_access])
 async def get_tag_scripts(
     tag_id: int,
     db: aiosqlite.Connection = Depends(get_db)

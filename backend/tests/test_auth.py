@@ -15,10 +15,10 @@ async def test_login_success(auth_client):
 
 
 @pytest.mark.asyncio
-async def test_login_wrong_password(client):
+async def test_login_wrong_password(anon_client):
     """Wrong credentials should return 401."""
     # First complete setup so the user exists
-    await client.post(
+    await anon_client.post(
         "/api/setup/complete",
         json={
             "mode": "development",
@@ -30,7 +30,7 @@ async def test_login_wrong_password(client):
             },
         },
     )
-    resp = await client.post(
+    resp = await anon_client.post(
         "/api/auth/login",
         data={"username": "admin", "password": "wrongpassword"},
     )
@@ -38,9 +38,9 @@ async def test_login_wrong_password(client):
 
 
 @pytest.mark.asyncio
-async def test_login_nonexistent_user(client):
+async def test_login_nonexistent_user(anon_client):
     """Login for a non-existent user should return 401."""
-    resp = await client.post(
+    resp = await anon_client.post(
         "/api/auth/login",
         data={"username": "nobody", "password": "pass"},
     )
@@ -48,9 +48,9 @@ async def test_login_nonexistent_user(client):
 
 
 @pytest.mark.asyncio
-async def test_me_requires_auth(client):
+async def test_me_requires_auth(anon_client):
     """Accessing /me without a token should return 401."""
-    resp = await client.get("/api/auth/me")
+    resp = await anon_client.get("/api/auth/me")
     assert resp.status_code == 401
 
 

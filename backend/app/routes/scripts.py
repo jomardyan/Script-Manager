@@ -1,22 +1,45 @@
 """
 Scripts API endpoints
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import List, Optional
-from datetime import datetime
+import asyncio
 import os
+from datetime import datetime, timezone
+from typing import List, Optional
+
 import aiosqlite
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.db.database import get_db
+from app.db.sql import TAGS_SUBQUERY, split_tags
 from app.models.schemas import (
     ScriptResponse, StatusUpdate, PaginatedResponse,
-    BulkTagRequest, BulkStatusRequest
+    BulkTagRequest, BulkStatusRequest, ExportRequest
 )
+from app.routes.deps import actor_name, get_optional_user, require_permission
 
 router = APIRouter()
 
 
-@router.get("/", response_model=PaginatedResponse)
+def _like_pattern(term: str) -> str:
+    """
+    Build a LIKE pattern that treats the user's text literally.
+
+    Without escaping, a search for "%" matches every row and "_" matches any
+    character, so the filter silently did something other than what was typed.
+    Callers must pair this with ESCAPE '\\'.
+    """
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+# Script bodies can be large; cap what a single request returns.
+MAX_CONTENT_BYTES = int(os.getenv("MAX_SCRIPT_CONTENT_BYTES", str(2 * 1024 * 1024)))
+
+read_access = Depends(require_permission("scripts.read"))
+update_access = Depends(require_permission("scripts.update"))
+
+
+@router.get("/", response_model=PaginatedResponse, dependencies=[read_access])
 async def list_scripts(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
@@ -45,8 +68,8 @@ async def list_scripts(
         params.append(status)
     
     if search:
-        conditions.append("(s.name LIKE ? OR s.path LIKE ?)")
-        search_pattern = f"%{search}%"
+        conditions.append("(s.name LIKE ? ESCAPE '\\' OR s.path LIKE ? ESCAPE '\\')")
+        search_pattern = _like_pattern(search)
         params.extend([search_pattern, search_pattern])
 
     allowed_sort_columns = {
@@ -69,7 +92,7 @@ async def list_scripts(
     
     # Get total count
     count_query = f"""
-        SELECT COUNT(DISTINCT s.id)
+        SELECT COUNT(*)
         FROM scripts s
         LEFT JOIN script_status st ON s.id = st.script_id
         WHERE {where_clause}
@@ -80,15 +103,12 @@ async def list_scripts(
     # Get paginated results
     offset = (page - 1) * page_size
     query = f"""
-        SELECT DISTINCT s.id, s.name, s.path, s.extension, s.language, 
+        SELECT s.id, s.name, s.path, s.extension, s.language,
                s.size, s.mtime, st.status,
-               GROUP_CONCAT(DISTINCT t.name) as tags
+               {TAGS_SUBQUERY} AS tags
         FROM scripts s
         LEFT JOIN script_status st ON s.id = st.script_id
-        LEFT JOIN script_tags sct ON s.id = sct.script_id
-        LEFT JOIN tags t ON sct.tag_id = t.id
         WHERE {where_clause}
-        GROUP BY s.id
         ORDER BY {sort_column} {sort_direction}, s.id ASC
         LIMIT ? OFFSET ?
     """
@@ -99,7 +119,9 @@ async def list_scripts(
         items = []
         for row in rows:
             item = dict(row)
-            item['tags'] = item['tags'].split(',') if item.get('tags') else []
+            # GROUP_CONCAT's separator is a unit separator rather than a
+            # comma so a tag name containing a comma is not split in two.
+            item['tags'] = split_tags(item.get('tags'))
             items.append(item)
     
     total_pages = (total + page_size - 1) // page_size
@@ -112,7 +134,7 @@ async def list_scripts(
         'total_pages': total_pages
     }
 
-@router.get("/{script_id}", response_model=ScriptResponse)
+@router.get("/{script_id}", response_model=ScriptResponse, dependencies=[read_access])
 async def get_script(script_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Get detailed script information"""
     async with db.execute("SELECT * FROM scripts WHERE id = ?", (script_id,)) as cursor:
@@ -168,11 +190,12 @@ async def get_script(script_id: int, db: aiosqlite.Connection = Depends(get_db))
     
     return script
 
-@router.put("/{script_id}/status")
+@router.put("/{script_id}/status", dependencies=[update_access])
 async def update_script_status(
     script_id: int,
     status_update: StatusUpdate,
-    db: aiosqlite.Connection = Depends(get_db)
+    db: aiosqlite.Connection = Depends(get_db),
+    current_user: Optional[dict] = Depends(get_optional_user),
 ):
     """Update script status and classification"""
     # Check if script exists
@@ -246,59 +269,66 @@ async def update_script_status(
             )
         )
     
-    # Log status changes
+    # Log status changes. The change_log.actor column existed but was never
+    # populated, so the audit trail could not say who made a change.
+    actor = actor_name(current_user)
     if status_update.status is not None:
         await db.execute(
             """
-            INSERT INTO change_log (script_id, change_type, old_value, new_value)
-            VALUES (?, 'status_changed', ?, ?)
+            INSERT INTO change_log (script_id, change_type, old_value, new_value, actor)
+            VALUES (?, 'status_changed', ?, ?, ?)
             """,
-            (script_id, old_values.get('status', 'none'), status_update.status)
+            (script_id, old_values.get('status', 'none'), status_update.status, actor)
         )
     
     if status_update.classification is not None:
         await db.execute(
             """
-            INSERT INTO change_log (script_id, change_type, old_value, new_value)
-            VALUES (?, 'classification_changed', ?, ?)
+            INSERT INTO change_log (script_id, change_type, old_value, new_value, actor)
+            VALUES (?, 'classification_changed', ?, ?, ?)
             """,
-            (script_id, old_values.get('classification', 'none'), status_update.classification)
+            (script_id, old_values.get('classification', 'none'), status_update.classification, actor)
         )
     
     if status_update.owner is not None:
         await db.execute(
             """
-            INSERT INTO change_log (script_id, change_type, old_value, new_value)
-            VALUES (?, 'owner_changed', ?, ?)
+            INSERT INTO change_log (script_id, change_type, old_value, new_value, actor)
+            VALUES (?, 'owner_changed', ?, ?, ?)
             """,
-            (script_id, old_values.get('owner', 'none'), status_update.owner)
+            (script_id, old_values.get('owner', 'none'), status_update.owner, actor)
         )
     
     if status_update.environment is not None:
         await db.execute(
             """
-            INSERT INTO change_log (script_id, change_type, old_value, new_value)
-            VALUES (?, 'environment_changed', ?, ?)
+            INSERT INTO change_log (script_id, change_type, old_value, new_value, actor)
+            VALUES (?, 'environment_changed', ?, ?, ?)
             """,
-            (script_id, old_values.get('environment', 'none'), status_update.environment)
+            (script_id, old_values.get('environment', 'none'), status_update.environment, actor)
         )
     
     await db.commit()
     return {"message": "Status updated successfully"}
 
-@router.post("/{script_id}/tags/{tag_id}")
+@router.post("/{script_id}/tags/{tag_id}", dependencies=[update_access])
 async def add_tag_to_script(
     script_id: int,
     tag_id: int,
     db: aiosqlite.Connection = Depends(get_db)
 ):
     """Add a tag to a script"""
+    async with db.execute("SELECT id FROM scripts WHERE id = ?", (script_id,)) as cursor:
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Script not found")
+
+    async with db.execute("SELECT name FROM tags WHERE id = ?", (tag_id,)) as cursor:
+        tag_row = await cursor.fetchone()
+        if not tag_row:
+            raise HTTPException(status_code=404, detail="Tag not found")
+        tag_name = tag_row[0]
+
     try:
-        # Get tag name
-        async with db.execute("SELECT name FROM tags WHERE id = ?", (tag_id,)) as cursor:
-            tag_row = await cursor.fetchone()
-            tag_name = tag_row[0] if tag_row else str(tag_id)
-        
         await db.execute(
             "INSERT INTO script_tags (script_id, tag_id) VALUES (?, ?)",
             (script_id, tag_id)
@@ -318,36 +348,39 @@ async def add_tag_to_script(
     except aiosqlite.IntegrityError:
         raise HTTPException(status_code=400, detail="Tag already added to script")
 
-@router.delete("/{script_id}/tags/{tag_id}")
+@router.delete("/{script_id}/tags/{tag_id}", dependencies=[update_access])
 async def remove_tag_from_script(
     script_id: int,
     tag_id: int,
-    db: aiosqlite.Connection = Depends(get_db)
+    db: aiosqlite.Connection = Depends(get_db),
+    current_user: Optional[dict] = Depends(get_optional_user),
 ):
     """Remove a tag from a script"""
-    # Get tag name
     async with db.execute("SELECT name FROM tags WHERE id = ?", (tag_id,)) as cursor:
         tag_row = await cursor.fetchone()
         tag_name = tag_row[0] if tag_row else str(tag_id)
-    
-    await db.execute(
+
+    cursor = await db.execute(
         "DELETE FROM script_tags WHERE script_id = ? AND tag_id = ?",
         (script_id, tag_id)
     )
-    
-    # Log the change
+    # Reporting success for a link that never existed hid mistakes and wrote a
+    # misleading audit entry.
+    if not cursor.rowcount:
+        raise HTTPException(status_code=404, detail="That tag is not applied to this script")
+
     await db.execute(
         """
-        INSERT INTO change_log (script_id, change_type, old_value)
-        VALUES (?, 'tag_removed', ?)
+        INSERT INTO change_log (script_id, change_type, old_value, actor)
+        VALUES (?, 'tag_removed', ?, ?)
         """,
-        (script_id, tag_name)
+        (script_id, tag_name, actor_name(current_user))
     )
-    
+
     await db.commit()
     return {"message": "Tag removed successfully"}
 
-@router.get("/duplicates/list")
+@router.get("/duplicates/list", dependencies=[read_access])
 async def list_duplicates(db: aiosqlite.Connection = Depends(get_db)):
     """Find and list duplicate scripts"""
     query = """
@@ -372,7 +405,7 @@ async def list_duplicates(db: aiosqlite.Connection = Depends(get_db)):
             })
         return duplicates
 
-@router.get("/{script_id}/history")
+@router.get("/{script_id}/history", dependencies=[read_access])
 async def get_script_history(script_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Get change history for a script"""
     # Check if script exists
@@ -401,7 +434,7 @@ async def get_script_history(script_id: int, db: aiosqlite.Connection = Depends(
             })
         return history
 
-@router.get("/{script_id}/content")
+@router.get("/{script_id}/content", dependencies=[read_access])
 async def get_script_content(script_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Get the actual file content of a script"""
     # Get script path and validate it exists in database
@@ -437,17 +470,31 @@ async def get_script_content(script_id: int, db: aiosqlite.Connection = Depends(
     if common_path != root_path_abs:
         raise HTTPException(status_code=403, detail="Access denied: file is outside registered folder root")
     
-    # Read file content
+    # Read the file in a worker thread and cap how much is returned: an
+    # unbounded synchronous read of a large file froze the whole API.
+    def _read() -> tuple:
+        size = os.path.getsize(file_path_abs)
+        with open(file_path_abs, 'r', encoding='utf-8', errors='ignore') as fh:
+            body = fh.read(MAX_CONTENT_BYTES + 1)
+        if len(body) > MAX_CONTENT_BYTES:
+            return body[:MAX_CONTENT_BYTES], True, size
+        return body, False, size
+
     try:
-        with open(file_path_abs, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-        return {"content": content, "path": file_path}
+        content, truncated, size = await asyncio.to_thread(_read)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found on disk")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Error reading file: {e}")
 
-@router.post("/bulk/tags")
+    return {
+        "content": content,
+        "path": file_path,
+        "size": size,
+        "truncated": truncated,
+    }
+
+@router.post("/bulk/tags", dependencies=[update_access])
 async def bulk_add_tags(
     request: BulkTagRequest,
     db: aiosqlite.Connection = Depends(get_db)
@@ -496,7 +543,7 @@ async def bulk_add_tags(
         "skipped": skipped_count
     }
 
-@router.post("/bulk/status")
+@router.post("/bulk/status", dependencies=[update_access])
 async def bulk_update_status(
     request: BulkStatusRequest,
     db: aiosqlite.Connection = Depends(get_db)
@@ -574,12 +621,19 @@ async def bulk_update_status(
         "updated": updated_count
     }
 
-@router.post("/export")
+@router.post("/export", dependencies=[read_access])
 async def export_scripts(
-    script_ids: List[int] = None,
+    request: ExportRequest = Body(default_factory=ExportRequest),
     db: aiosqlite.Connection = Depends(get_db)
 ):
-    """Export script metadata as JSON"""
+    """
+    Export script metadata as JSON.
+
+    `script_ids` is read from the request body. Declared as a bare
+    `List[int] = None` parameter it was interpreted as a query parameter and
+    every export silently returned the entire database.
+    """
+    script_ids = request.script_ids
     # Build query based on whether specific script IDs are provided
     if script_ids:
         placeholders = ','.join('?' * len(script_ids))
@@ -645,12 +699,12 @@ async def export_scripts(
             exported_scripts.append(script)
     
     return {
-        "export_date": datetime.now().isoformat(),
+        "export_date": datetime.now(timezone.utc).isoformat(),
         "script_count": len(exported_scripts),
         "scripts": exported_scripts
     }
 
-@router.post("/import")
+@router.post("/import", dependencies=[update_access])
 async def import_scripts(
     data: dict,
     conflict_resolution: str = Query("skip", pattern="^(skip|overwrite|merge)$"),
@@ -663,7 +717,6 @@ async def import_scripts(
       - overwrite: Overwrite existing script metadata
       - merge: Merge tags and notes
     """
-    imported_count = 0
     skipped_count = 0
     updated_count = 0
     
@@ -690,6 +743,7 @@ async def import_scripts(
             
             # Handle tags
             if script_data.get('tags'):
+                existing_tag_ids = set()
                 if conflict_resolution == "merge":
                     # Get existing tags
                     async with db.execute(
@@ -730,11 +784,20 @@ async def import_scripts(
             # Handle status
             if script_data.get('status') and conflict_resolution in ["overwrite", "merge"]:
                 status_data = script_data['status']
+                # An upsert rather than INSERT OR REPLACE: the latter deletes
+                # the existing row first, silently wiping deprecated_date and
+                # migration_note (and any column the import omits).
                 await db.execute(
                     """
-                    INSERT OR REPLACE INTO script_status 
+                    INSERT INTO script_status
                     (script_id, status, classification, owner, environment, updated_at)
                     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(script_id) DO UPDATE SET
+                        status = COALESCE(excluded.status, script_status.status),
+                        classification = COALESCE(excluded.classification, script_status.classification),
+                        owner = COALESCE(excluded.owner, script_status.owner),
+                        environment = COALESCE(excluded.environment, script_status.environment),
+                        updated_at = CURRENT_TIMESTAMP
                     """,
                     (
                         existing_id,
@@ -750,6 +813,14 @@ async def import_scripts(
                 for note_data in script_data['notes']:
                     content = note_data.get('content')
                     if content:
+                        # Re-importing the same file used to append a fresh
+                        # copy of every note each time.
+                        async with db.execute(
+                            "SELECT 1 FROM script_notes WHERE script_id = ? AND content = ?",
+                            (existing_id, content),
+                        ) as cursor:
+                            if await cursor.fetchone():
+                                continue
                         is_markdown = 1 if note_data.get('is_markdown') else 0
                         await db.execute(
                             "INSERT INTO script_notes (script_id, content, is_markdown) VALUES (?, ?, ?)",
@@ -764,13 +835,15 @@ async def import_scripts(
     await db.commit()
     
     return {
+        # Scripts are only ever matched to rows that already exist (a metadata
+        # import cannot conjure a file on disk), so there is no "imported"
+        # count to report - it was always zero.
         "message": "Import completed",
-        "imported": imported_count,
         "updated": updated_count,
         "skipped": skipped_count
     }
 
-@router.get("/{script_id}/fields")
+@router.get("/{script_id}/fields", dependencies=[read_access])
 async def get_script_custom_fields(script_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Get all custom fields for a script"""
     async with db.execute("SELECT id FROM scripts WHERE id = ?", (script_id,)) as cursor:
@@ -784,7 +857,7 @@ async def get_script_custom_fields(script_id: int, db: aiosqlite.Connection = De
         rows = await cursor.fetchall()
         return {row[0]: row[1] for row in rows}
 
-@router.put("/{script_id}/fields/{key}")
+@router.put("/{script_id}/fields/{key}", dependencies=[update_access])
 async def set_script_custom_field(
     script_id: int,
     key: str,
@@ -820,7 +893,7 @@ async def set_script_custom_field(
     await db.commit()
     return {"message": "Custom field updated successfully"}
 
-@router.delete("/{script_id}/fields/{key}")
+@router.delete("/{script_id}/fields/{key}", dependencies=[update_access])
 async def delete_script_custom_field(
     script_id: int,
     key: str,

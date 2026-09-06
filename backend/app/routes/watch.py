@@ -7,11 +7,15 @@ import os
 
 from app.db.database import get_db, DB_PATH
 from app.services.watch import get_watch_manager
+from app.routes.deps import require_permission
 
 router = APIRouter()
 
+read_access = Depends(require_permission("roots.read"))
+manage_access = Depends(require_permission("roots.update"))
 
-@router.post("/start/{root_id}")
+
+@router.post("/start/{root_id}", dependencies=[manage_access])
 async def start_watch_mode(
     root_id: int,
     db: aiosqlite.Connection = Depends(get_db)
@@ -62,7 +66,7 @@ async def start_watch_mode(
     }
 
 
-@router.post("/stop/{root_id}")
+@router.post("/stop/{root_id}", dependencies=[manage_access])
 async def stop_watch_mode(
     root_id: int,
     db: aiosqlite.Connection = Depends(get_db)
@@ -93,7 +97,7 @@ async def stop_watch_mode(
     }
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[read_access])
 async def watch_status(db: aiosqlite.Connection = Depends(get_db)):
     """Get watch mode status for all folder roots"""
     watch_manager = get_watch_manager(DB_PATH)
@@ -142,7 +146,7 @@ async def watch_status(db: aiosqlite.Connection = Depends(get_db)):
     }
 
 
-@router.post("/start-all")
+@router.post("/start-all", dependencies=[manage_access])
 async def start_all_watch_mode(db: aiosqlite.Connection = Depends(get_db)):
     """Start watch mode for all folder roots that have it enabled"""
     watch_manager = get_watch_manager(DB_PATH)
@@ -176,7 +180,7 @@ async def start_all_watch_mode(db: aiosqlite.Connection = Depends(get_db)):
     }
 
 
-@router.post("/stop-all")
+@router.post("/stop-all", dependencies=[manage_access])
 async def stop_all_watch_mode():
     """Stop watch mode for all folder roots"""
     watch_manager = get_watch_manager(DB_PATH)

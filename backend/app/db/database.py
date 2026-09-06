@@ -2,25 +2,132 @@
 Database configuration and initialization
 """
 import os
-import aiosqlite
+from contextlib import asynccontextmanager
 from pathlib import Path
+
+import aiosqlite
 
 # Database configuration
 DB_PATH = os.getenv("DATABASE_PATH", "./data/scripts.db")
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
+# Applied to every connection the application opens. Without foreign_keys the
+# ON DELETE CASCADE clauses in the schema silently do nothing, which orphans
+# scripts, notes, tags, pings and executions whenever a parent row is deleted.
+CONNECTION_PRAGMAS = (
+    "PRAGMA foreign_keys = ON",
+    "PRAGMA busy_timeout = 5000",
+)
+
+
+async def apply_connection_pragmas(db: aiosqlite.Connection):
+    """Apply the per-connection pragmas every code path relies on."""
+    for pragma in CONNECTION_PRAGMAS:
+        await db.execute(pragma)
+
+
+@asynccontextmanager
+async def connection(db_path: str = None):
+    """
+    Open a configured connection for the duration of the block.
+
+    An async context manager rather than a coroutine returning a connection:
+    aiosqlite's Connection is both awaitable and a context manager, so
+    `async with await connect()` starts its worker thread twice and deadlocks.
+    """
+    async with aiosqlite.connect(db_path or DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        await apply_connection_pragmas(db)
+        yield db
+
+
 async def get_db():
-    """Get database connection"""
+    """Get database connection (FastAPI dependency)"""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
+        await apply_connection_pragmas(db)
         yield db
+
+
+async def _ensure_column(db, table: str, column: str, ddl: str):
+    """
+    Add a column to an existing table if it is missing.
+
+    `CREATE TABLE IF NOT EXISTS` never alters an existing table, so databases
+    created by an older release would otherwise never receive new columns.
+    """
+    async with db.execute(f"PRAGMA table_info({table})") as cursor:
+        existing = {row[1] for row in await cursor.fetchall()}
+    if column not in existing:
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+async def _run_migrations(db):
+    """Apply additive schema migrations to databases created by older versions."""
+    await _ensure_column(db, "folder_roots", "enable_content_indexing", "BOOLEAN DEFAULT 0")
+    await _ensure_column(db, "folder_roots", "enable_watch_mode", "BOOLEAN DEFAULT 0")
+    await _ensure_column(db, "schedule_jobs", "next_run_at", "TIMESTAMP")
+    await _ensure_column(db, "schedule_jobs", "notify_channel_ids", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "monitors", "notify_channel_ids", "TEXT DEFAULT '[]'")
+    await _ensure_column(db, "incidents", "acknowledged_by", "TEXT")
+    await _ensure_column(db, "users", "last_login_at", "TIMESTAMP")
+
+
+async def cleanup_orphans(db) -> dict:
+    """
+    Remove rows orphaned by deletes that ran while foreign_keys was OFF.
+
+    Earlier releases opened request connections without `PRAGMA foreign_keys`,
+    so deleting a folder root (or script, monitor, job) left its children
+    behind. New installs are unaffected; this is a one-shot repair for
+    existing databases.
+    """
+    statements = {
+        "folders": "DELETE FROM folders WHERE root_id NOT IN (SELECT id FROM folder_roots)",
+        "scripts": "DELETE FROM scripts WHERE root_id NOT IN (SELECT id FROM folder_roots)",
+        "script_notes": "DELETE FROM script_notes WHERE script_id NOT IN (SELECT id FROM scripts)",
+        "script_tags": (
+            "DELETE FROM script_tags WHERE script_id NOT IN (SELECT id FROM scripts) "
+            "OR tag_id NOT IN (SELECT id FROM tags)"
+        ),
+        "script_status": "DELETE FROM script_status WHERE script_id NOT IN (SELECT id FROM scripts)",
+        "script_fields": "DELETE FROM script_fields WHERE script_id NOT IN (SELECT id FROM scripts)",
+        "change_log": "DELETE FROM change_log WHERE script_id NOT IN (SELECT id FROM scripts)",
+        "scan_events": "DELETE FROM scan_events WHERE root_id NOT IN (SELECT id FROM folder_roots)",
+        "attachments": (
+            "DELETE FROM attachments WHERE (script_id IS NOT NULL AND script_id NOT IN (SELECT id FROM scripts)) "
+            "OR (note_id IS NOT NULL AND note_id NOT IN (SELECT id FROM script_notes))"
+        ),
+        "monitor_pings": "DELETE FROM monitor_pings WHERE monitor_id NOT IN (SELECT id FROM monitors)",
+        "job_executions": "DELETE FROM job_executions WHERE job_id NOT IN (SELECT id FROM schedule_jobs)",
+        "user_roles": (
+            "DELETE FROM user_roles WHERE user_id NOT IN (SELECT id FROM users) "
+            "OR role_id NOT IN (SELECT id FROM roles)"
+        ),
+        "scripts_fts": "DELETE FROM scripts_fts WHERE script_id NOT IN (SELECT id FROM scripts)",
+    }
+    removed = {}
+    for table, sql in statements.items():
+        cursor = await db.execute(sql)
+        if cursor.rowcount and cursor.rowcount > 0:
+            removed[table] = cursor.rowcount
+    await db.commit()
+    return removed
+
 
 async def init_db():
     """Initialize database with schema"""
     async with aiosqlite.connect(DB_PATH) as db:
         # Enable foreign keys
-        await db.execute("PRAGMA foreign_keys = ON")
-        
+        await apply_connection_pragmas(db)
+        # Write-Ahead Logging keeps readers from blocking the writer, which
+        # matters because scans, the scheduler and requests all write.
+        try:
+            await db.execute("PRAGMA journal_mode = WAL")
+        except aiosqlite.Error:
+            # Not supported on some filesystems (e.g. certain network mounts).
+            pass
+
         # Create folder_roots table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS folder_roots (
@@ -39,7 +146,7 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         # Create folders table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS folders (
@@ -53,7 +160,7 @@ async def init_db():
                 FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE
             )
         """)
-        
+
         # Create scripts table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS scripts (
@@ -75,7 +182,7 @@ async def init_db():
                 FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
             )
         """)
-        
+
         # Create script_notes table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS script_notes (
@@ -88,7 +195,7 @@ async def init_db():
                 FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
             )
         """)
-        
+
         # Create tags table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS tags (
@@ -99,7 +206,7 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         # Create script_tags table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS script_tags (
@@ -111,7 +218,7 @@ async def init_db():
                 FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
             )
         """)
-        
+
         # Create script_fields table for custom metadata
         await db.execute("""
             CREATE TABLE IF NOT EXISTS script_fields (
@@ -123,7 +230,7 @@ async def init_db():
                 FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
             )
         """)
-        
+
         # Create script_status table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS script_status (
@@ -138,7 +245,7 @@ async def init_db():
                 FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
             )
         """)
-        
+
         # Create scan_events table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS scan_events (
@@ -155,7 +262,7 @@ async def init_db():
                 FOREIGN KEY (root_id) REFERENCES folder_roots(id) ON DELETE CASCADE
             )
         """)
-        
+
         # Create change_log table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS change_log (
@@ -169,7 +276,7 @@ async def init_db():
                 FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
             )
         """)
-        
+
         # Create attachments table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS attachments (
@@ -186,7 +293,7 @@ async def init_db():
                 FOREIGN KEY (note_id) REFERENCES script_notes(id) ON DELETE CASCADE
             )
         """)
-        
+
         # Create users table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -197,11 +304,12 @@ async def init_db():
                 hashed_password TEXT NOT NULL,
                 is_active BOOLEAN DEFAULT 1,
                 is_superuser BOOLEAN DEFAULT 0,
+                last_login_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         # Create roles table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS roles (
@@ -212,7 +320,7 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         # Create user_roles junction table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS user_roles (
@@ -224,7 +332,7 @@ async def init_db():
                 FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
             )
         """)
-        
+
         # Create saved_searches table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS saved_searches (
@@ -237,7 +345,7 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         # Create app_settings table for wizard/configuration state
         await db.execute("""
             CREATE TABLE IF NOT EXISTS app_settings (
@@ -246,7 +354,7 @@ async def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
         # Create monitors table for heartbeat/fail-safe monitoring
         await db.execute("""
             CREATE TABLE IF NOT EXISTS monitors (
@@ -360,22 +468,33 @@ async def init_db():
                 tokenize='porter unicode61'
             )
         """)
-        
+
+        # Migrations run before the index block: an index over a column that a
+        # migration adds cannot be created while that column is still missing.
+        await _run_migrations(db)
+
         # Create indexes for performance
         await db.execute("CREATE INDEX IF NOT EXISTS idx_scripts_name ON scripts(name)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_scripts_extension ON scripts(extension)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_scripts_language ON scripts(language)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_scripts_hash ON scripts(hash)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_scripts_mtime ON scripts(mtime)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_scripts_root ON scripts(root_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_scripts_missing ON scripts(missing_flag)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_scripts_path ON scripts(path)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_script_tags_script ON script_tags(script_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_script_tags_tag ON script_tags(tag_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_script_notes_script ON script_notes(script_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_change_log_script ON change_log(script_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_change_log_time ON change_log(event_time)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_monitor_pings_monitor ON monitor_pings(monitor_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_job_executions_job ON job_executions(job_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_job_executions_started ON job_executions(started_at)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_job_executions_status ON job_executions(status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_schedule_jobs_next_run ON schedule_jobs(next_run_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_incidents_source ON incidents(source_type, source_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status)")
-        
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_attachments_script ON attachments(script_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_attachments_note ON attachments(note_id)")
+
         await db.commit()
-        print("Database initialized successfully")

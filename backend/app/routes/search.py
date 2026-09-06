@@ -5,11 +5,15 @@ from fastapi import APIRouter, Depends
 import aiosqlite
 
 from app.db.database import get_db
+from app.db.sql import TAGS_SUBQUERY, split_tags
 from app.models.schemas import SearchRequest, PaginatedResponse
+from app.routes.deps import require_permission
 
 router = APIRouter()
 
-@router.post("/", response_model=PaginatedResponse)
+read_access = Depends(require_permission("search.read"))
+
+@router.post("/", response_model=PaginatedResponse, dependencies=[read_access])
 async def search_scripts(
     search: SearchRequest,
     db: aiosqlite.Connection = Depends(get_db)
@@ -20,8 +24,11 @@ async def search_scripts(
     
     # Query filter
     if search.query:
-        conditions.append("(s.name LIKE ? OR s.path LIKE ?)")
-        search_pattern = f"%{search.query}%"
+        # ESCAPE keeps %/_ in the user's text literal instead of turning the
+        # query into a wildcard that matches everything.
+        conditions.append("(s.name LIKE ? ESCAPE '\\' OR s.path LIKE ? ESCAPE '\\')")
+        escaped = search.query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        search_pattern = f"%{escaped}%"
         params.extend([search_pattern, search_pattern])
     
     # Language filter
@@ -116,9 +123,9 @@ async def search_scripts(
     # Get paginated results
     offset = (search.page - 1) * search.page_size
     query = f"""
-        SELECT DISTINCT s.id, s.name, s.path, s.extension, s.language, 
+        SELECT DISTINCT s.id, s.name, s.path, s.extension, s.language,
                s.size, s.mtime, st.status,
-               GROUP_CONCAT(DISTINCT t.name) as tags
+               {TAGS_SUBQUERY} AS tags
         FROM scripts s
         LEFT JOIN script_status st ON s.id = st.script_id
         LEFT JOIN script_tags sct ON s.id = sct.script_id
@@ -135,7 +142,7 @@ async def search_scripts(
         items = []
         for row in rows:
             item = dict(row)
-            item['tags'] = item['tags'].split(',') if item.get('tags') else []
+            item['tags'] = split_tags(item.get('tags'))
             items.append(item)
     
     total_pages = (total + search.page_size - 1) // search.page_size
@@ -148,7 +155,7 @@ async def search_scripts(
         'total_pages': total_pages
     }
 
-@router.get("/stats")
+@router.get("/stats", dependencies=[read_access])
 async def get_stats(db: aiosqlite.Connection = Depends(get_db)):
     """Get statistics about scripts"""
     stats = {}
