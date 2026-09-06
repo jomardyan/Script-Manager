@@ -320,15 +320,23 @@ async def trigger_job(
                 detail="Job is already running. Overlap prevention is enabled.",
             )
 
-    cur2 = await db.execute(
-        """
-        INSERT INTO job_executions (job_id, started_at, status, triggered_by)
-        VALUES (?, CURRENT_TIMESTAMP, 'running', 'manual')
-        """,
-        (job_id,),
-    )
-    execution_id = cur2.lastrowid
-    await db.commit()
+    try:
+        cur2 = await db.execute(
+            """
+            INSERT INTO job_executions (job_id, started_at, status, triggered_by)
+            VALUES (?, ?, 'running', 'manual')
+            """,
+            (job_id, datetime.now(timezone.utc).isoformat()),
+        )
+        execution_id = cur2.lastrowid
+        await db.commit()
+    except aiosqlite.IntegrityError:
+        # The partial unique index on running executions rejected this insert,
+        # which means another trigger won the race a moment ago.
+        raise HTTPException(
+            status_code=409,
+            detail="Job is already running. Overlap prevention is enabled.",
+        )
 
     background_tasks.add_task(
         scheduler.run_job_execution,

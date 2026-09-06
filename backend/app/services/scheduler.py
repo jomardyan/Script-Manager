@@ -568,15 +568,21 @@ async def tick_scheduler(db_path: Optional[str] = None) -> int:
                         )
                         continue
 
-            cursor = await db.execute(
-                """
-                INSERT INTO job_executions (job_id, started_at, status, triggered_by)
-                VALUES (?, ?, 'running', 'scheduler')
-                """,
-                (job_id, now.isoformat()),
-            )
-            execution_id = cursor.lastrowid
-            await db.commit()
+            try:
+                cursor = await db.execute(
+                    """
+                    INSERT INTO job_executions (job_id, started_at, status, triggered_by)
+                    VALUES (?, ?, 'running', 'scheduler')
+                    """,
+                    (job_id, now.isoformat()),
+                )
+                execution_id = cursor.lastrowid
+                await db.commit()
+            except aiosqlite.IntegrityError:
+                # A manual trigger started this job between our overlap check
+                # and this insert; the partial unique index caught it.
+                logger.info("Skipping job '%s': another run started concurrently", job["name"])
+                continue
 
             asyncio.create_task(run_job_execution(
                 execution_id=execution_id,

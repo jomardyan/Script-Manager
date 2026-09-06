@@ -500,6 +500,23 @@ async def bulk_add_tags(
     db: aiosqlite.Connection = Depends(get_db)
 ):
     """Add tags to multiple scripts"""
+    if not request.script_ids or not request.tag_ids:
+        raise HTTPException(status_code=400, detail="Provide at least one script and one tag")
+
+    # Verify the tags up front so an unknown id is a clear 404 rather than a
+    # foreign-key error counted as "skipped".
+    placeholders = ','.join('?' * len(request.tag_ids))
+    async with db.execute(
+        f"SELECT id, name FROM tags WHERE id IN ({placeholders})", tuple(request.tag_ids)
+    ) as cursor:
+        tag_names = {row[0]: row[1] for row in await cursor.fetchall()}
+    unknown = sorted(set(request.tag_ids) - set(tag_names))
+    if unknown:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown tag id(s): {', '.join(str(t) for t in unknown)}",
+        )
+
     added_count = 0
     skipped_count = 0
     
@@ -512,11 +529,8 @@ async def bulk_add_tags(
         
         for tag_id in request.tag_ids:
             try:
-                # Get tag name for logging
-                async with db.execute("SELECT name FROM tags WHERE id = ?", (tag_id,)) as cursor:
-                    tag_row = await cursor.fetchone()
-                    tag_name = tag_row[0] if tag_row else str(tag_id)
-                
+                tag_name = tag_names[tag_id]
+
                 await db.execute(
                     "INSERT INTO script_tags (script_id, tag_id) VALUES (?, ?)",
                     (script_id, tag_id)

@@ -491,6 +491,13 @@ async def init_db():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_job_executions_job ON job_executions(job_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_job_executions_started ON job_executions(started_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_job_executions_status ON job_executions(status)")
+        # Overlap prevention was a check-then-act race: two concurrent triggers
+        # could both see no running execution and both insert one. A partial
+        # unique index makes the database refuse the second insert.
+        await db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_job_executions_single_running "
+            "ON job_executions(job_id) WHERE status = 'running'"
+        )
         await db.execute("CREATE INDEX IF NOT EXISTS idx_schedule_jobs_next_run ON schedule_jobs(next_run_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_incidents_source ON incidents(source_type, source_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status)")
