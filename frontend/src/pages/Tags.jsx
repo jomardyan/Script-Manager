@@ -1,160 +1,278 @@
-import { useState, useEffect } from 'react';
-import { tagsApi } from '../services/api';
+import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
-function Tags() {
+import { apiError, tagsApi } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import {
+  Card, EmptyState, ErrorBanner, Field, PageHeader, TableSkeleton, TagChip,
+} from '../components/ui';
+import Modal from '../components/Modal';
+import { useConfirm } from '../components/ConfirmDialog';
+import { useToast } from '../context/ToastContext';
+
+export default function Tags() {
+  const toast = useToast();
+  const { can } = useAuth();
+  const { confirm, confirmElement } = useConfirm();
+
   const [tags, setTags] = useState([]);
+  const [usage, setUsage] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showModal, setShowModal] = useState(false);
-  const [formData, setFormData] = useState({
-    name: '',
-    group_name: '',
-    color: '#3498db'
-  });
+  const [busyId, setBusyId] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [expandedScripts, setExpandedScripts] = useState([]);
 
-  useEffect(() => {
-    loadTags();
-  }, []);
-
-  const loadTags = async () => {
+  const loadTags = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      const response = await tagsApi.list();
-      setTags(response.data);
+      const { data } = await tagsApi.list();
+      setTags(data);
+
+      // Usage counts make the delete confirmation able to state its impact
+      // instead of asking "are you sure?" with no context.
+      const counts = await Promise.allSettled(data.map((tag) => tagsApi.getScripts(tag.id)));
+      const map = {};
+      data.forEach((tag, index) => {
+        const result = counts[index];
+        map[tag.id] = result.status === 'fulfilled' ? result.value.data.length : null;
+      });
+      setUsage(map);
     } catch (err) {
-      setError(err.message);
+      setError(apiError(err));
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  useEffect(() => { loadTags(); }, [loadTags]);
+
+  const handleDelete = async (tag) => {
+    const count = usage[tag.id];
+    const ok = await confirm({
+      title: `Delete tag "${tag.name}"?`,
+      message: count
+        ? `This tag is applied to ${count} script${count === 1 ? '' : 's'}. Deleting it removes it from all of them.`
+        : 'This tag is not applied to any script.',
+      detail: 'The scripts themselves are not affected.',
+      confirmLabel: 'Delete tag',
+    });
+    if (!ok) return;
+
+    setBusyId(tag.id);
     try {
-      await tagsApi.create(formData);
-      setShowModal(false);
-      setFormData({ name: '', group_name: '', color: '#3498db' });
-      loadTags();
+      await tagsApi.delete(tag.id);
+      toast.success(`Deleted tag "${tag.name}".`);
+      if (expanded === tag.id) setExpanded(null);
+      await loadTags();
     } catch (err) {
-      alert('Error creating tag: ' + err.message);
+      toast.error(apiError(err));
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Are you sure you want to delete this tag?')) {
-      try {
-        await tagsApi.delete(id);
-        loadTags();
-      } catch (err) {
-        alert('Error deleting tag: ' + err.message);
-      }
+  const toggleExpand = async (tag) => {
+    if (expanded === tag.id) {
+      setExpanded(null);
+      return;
+    }
+    setExpanded(tag.id);
+    setExpandedScripts([]);
+    try {
+      const { data } = await tagsApi.getScripts(tag.id);
+      setExpandedScripts(data);
+    } catch (err) {
+      toast.error(apiError(err));
     }
   };
-
-  if (loading) return <div className="loading">Loading...</div>;
-  if (error) return <div className="error">Error: {error}</div>;
 
   return (
     <div>
-      <div className="page-header">
-        <h2>Tags</h2>
-        <p>Manage tags for organizing scripts</p>
-      </div>
-
-      <button className="button" onClick={() => setShowModal(true)}>
-        Create Tag
-      </button>
-
-      <div className="card" style={{ marginTop: '20px' }}>
-        {tags.length > 0 ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Group</th>
-                <th>Color</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tags.map(tag => (
-                <tr key={tag.id}>
-                  <td>
-                    <span className="tag" style={{ backgroundColor: tag.color || '#3498db' }}>
-                      {tag.name}
-                    </span>
-                  </td>
-                  <td>{tag.group_name || '-'}</td>
-                  <td>
-                    <div style={{ 
-                      width: '40px', 
-                      height: '20px', 
-                      backgroundColor: tag.color || '#3498db',
-                      borderRadius: '3px' 
-                    }}></div>
-                  </td>
-                  <td>
-                    <button
-                      className="button button-danger"
-                      onClick={() => handleDelete(tag.id)}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <p>No tags created yet. Click "Create Tag" to get started.</p>
+      {confirmElement}
+      <PageHeader
+        title="Tags"
+        description="Labels for organising scripts across folder roots."
+        actions={can('tags.create') && (
+          <button type="button" className="button" onClick={() => setShowModal(true)}>
+            Create tag
+          </button>
         )}
-      </div>
+      />
+
+      <ErrorBanner message={error} onRetry={loadTags} onDismiss={() => setError(null)} />
+
+      <Card>
+        {loading ? (
+          <TableSkeleton rows={5} columns={4} />
+        ) : tags.length === 0 ? (
+          <EmptyState
+            icon="◆"
+            title="No tags yet"
+            description="Tags let you group scripts by purpose, team or anything else that matters to you."
+            action={can('tags.create') && (
+              <button type="button" className="button" onClick={() => setShowModal(true)}>
+                Create your first tag
+              </button>
+            )}
+          />
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th scope="col">Tag</th>
+                  <th scope="col">Group</th>
+                  <th scope="col">Scripts</th>
+                  <th scope="col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tags.map((tag) => (
+                  <Fragment key={tag.id}>
+                    <tr>
+                      <td><TagChip name={tag.name} color={tag.color} /></td>
+                      <td>{tag.group_name || <span className="text-muted">—</span>}</td>
+                      <td>
+                        {usage[tag.id] === null || usage[tag.id] === undefined
+                          ? <span className="text-muted">—</span>
+                          : usage[tag.id]}
+                      </td>
+                      <td>
+                        <div className="row-actions">
+                          <button
+                            type="button"
+                            className="button button-secondary button--small"
+                            onClick={() => toggleExpand(tag)}
+                            aria-expanded={expanded === tag.id}
+                          >
+                            {expanded === tag.id ? 'Hide scripts' : 'Show scripts'}
+                          </button>
+                          {can('tags.delete') && (
+                            <button
+                              type="button"
+                              className="button button-danger button--small"
+                              onClick={() => handleDelete(tag)}
+                              disabled={busyId === tag.id}
+                            >
+                              {busyId === tag.id ? 'Deleting…' : 'Delete'}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {expanded === tag.id && (
+                      <tr>
+                        <td colSpan={4}>
+                          {expandedScripts.length === 0 ? (
+                            <p className="text-muted text-small">No scripts carry this tag.</p>
+                          ) : (
+                            <ul className="stack" style={{ listStyle: 'none' }}>
+                              {expandedScripts.map((script) => (
+                                <li key={script.id}>
+                                  <Link to={`/scripts/${script.id}`}>{script.name}</Link>
+                                  <span className="text-muted text-small mono"> {script.path}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Create Tag</h2>
-            <form onSubmit={handleSubmit}>
-              <div className="form-group">
-                <label>Name *</label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label>Group</label>
-                <input
-                  type="text"
-                  value={formData.group_name}
-                  onChange={(e) => setFormData({ ...formData, group_name: e.target.value })}
-                  placeholder="Optional group name"
-                />
-              </div>
-              <div className="form-group">
-                <label>Color</label>
-                <input
-                  type="color"
-                  value={formData.color}
-                  onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                />
-              </div>
-              <div className="modal-actions">
-                <button type="button" className="button button-secondary" onClick={() => setShowModal(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="button">
-                  Create
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <CreateTagModal
+          onClose={() => setShowModal(false)}
+          onCreated={(name) => {
+            setShowModal(false);
+            toast.success(`Created tag "${name}".`);
+            loadTags();
+          }}
+          onError={(message) => toast.error(message)}
+        />
       )}
     </div>
   );
 }
 
-export default Tags;
+function CreateTagModal({ onClose, onCreated, onError }) {
+  const [form, setForm] = useState({ name: '', group_name: '', color: '#1d6fb8' });
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    try {
+      await tagsApi.create({
+        name: form.name.trim(),
+        group_name: form.group_name.trim() || null,
+        color: form.color,
+      });
+      onCreated(form.name.trim());
+    } catch (err) {
+      onError(apiError(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Create tag" onClose={onClose}>
+      <form onSubmit={submit}>
+        <Field label="Name" required hint="Must be unique across the collection.">
+          {(props) => (
+            <input
+              {...props}
+              type="text"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              required
+              maxLength={100}
+              autoFocus
+            />
+          )}
+        </Field>
+        <Field label="Group" hint="Optional. Groups related tags together, for example 'team' or 'environment'.">
+          {(props) => (
+            <input
+              {...props}
+              type="text"
+              value={form.group_name}
+              onChange={(e) => setForm({ ...form, group_name: e.target.value })}
+              maxLength={100}
+            />
+          )}
+        </Field>
+        <Field label="Colour">
+          {(props) => (
+            <input
+              {...props}
+              type="color"
+              value={form.color}
+              onChange={(e) => setForm({ ...form, color: e.target.value })}
+              style={{ width: 64, height: 36, padding: 2 }}
+            />
+          )}
+        </Field>
+
+        <div className="modal__footer">
+          <button type="button" className="button button-secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" className="button" disabled={busy || !form.name.trim()}>
+            {busy ? 'Creating…' : 'Create tag'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}

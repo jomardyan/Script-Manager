@@ -1,17 +1,25 @@
 """
 Notes API endpoints
 """
+import html
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 import aiosqlite
 
 from app.db.database import get_db
 from app.models.schemas import NoteCreate, NoteResponse
+from app.services.fts import update_script_notes_fts
 from app.services.markdown import render_markdown, extract_markdown_preview
+from app.routes.deps import require_permission
 
 router = APIRouter()
 
-@router.get("/script/{script_id}", response_model=List[NoteResponse])
+read_access = Depends(require_permission("notes.read"))
+create_access = Depends(require_permission("notes.create"))
+update_access = Depends(require_permission("notes.update"))
+delete_access = Depends(require_permission("notes.delete"))
+
+@router.get("/script/{script_id}", response_model=List[NoteResponse], dependencies=[read_access])
 async def get_script_notes(script_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Get all notes for a script"""
     async with db.execute("SELECT id FROM scripts WHERE id = ?", (script_id,)) as cursor:
@@ -25,7 +33,7 @@ async def get_script_notes(script_id: int, db: aiosqlite.Connection = Depends(ge
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
-@router.post("/script/{script_id}", response_model=NoteResponse)
+@router.post("/script/{script_id}", response_model=NoteResponse, status_code=201, dependencies=[create_access])
 async def create_script_note(
     script_id: int,
     note: NoteCreate,
@@ -52,7 +60,8 @@ async def create_script_note(
     )
     
     await db.commit()
-    
+    await update_script_notes_fts(db, script_id)
+
     async with db.execute(
         "SELECT * FROM script_notes WHERE id = ?",
         (note_id,)
@@ -60,7 +69,7 @@ async def create_script_note(
         row = await cursor.fetchone()
         return dict(row)
 
-@router.put("/{note_id}", response_model=NoteResponse)
+@router.put("/{note_id}", response_model=NoteResponse, dependencies=[update_access])
 async def update_note(
     note_id: int,
     note: NoteCreate,
@@ -92,7 +101,8 @@ async def update_note(
     )
     
     await db.commit()
-    
+    await update_script_notes_fts(db, script_id)
+
     async with db.execute(
         "SELECT * FROM script_notes WHERE id = ?",
         (note_id,)
@@ -100,7 +110,7 @@ async def update_note(
         row = await cursor.fetchone()
         return dict(row)
 
-@router.delete("/{note_id}")
+@router.delete("/{note_id}", dependencies=[delete_access])
 async def delete_note(note_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Delete a note"""
     async with db.execute(
@@ -113,6 +123,9 @@ async def delete_note(note_id: int, db: aiosqlite.Connection = Depends(get_db)):
         script_id = note_row[0]
         old_content = note_row[1]
     
+    from app.routes.attachments import purge_attachment_files
+
+    await purge_attachment_files(db, note_ids=[note_id])
     await db.execute("DELETE FROM script_notes WHERE id = ?", (note_id,))
     
     # Log the change
@@ -125,9 +138,10 @@ async def delete_note(note_id: int, db: aiosqlite.Connection = Depends(get_db)):
     )
     
     await db.commit()
+    await update_script_notes_fts(db, script_id)
     return {"message": "Note deleted successfully"}
 
-@router.get("/{note_id}/render")
+@router.get("/{note_id}/render", dependencies=[read_access])
 async def render_note(note_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Render a markdown note to HTML"""
     async with db.execute(
@@ -141,9 +155,10 @@ async def render_note(note_id: int, db: aiosqlite.Connection = Depends(get_db)):
         content, is_markdown = note_row
     
     if not is_markdown:
-        # Return plain text wrapped in <pre> tag
+        # Escape before wrapping: the markdown path is sanitised by bleach, so
+        # leaving the plain-text path raw made it the easier XSS route of the two.
         return {
-            "html": f"<pre>{content}</pre>",
+            "html": f"<pre>{html.escape(content)}</pre>",
             "is_markdown": False,
             "preview": content[:200]
         }
@@ -158,12 +173,12 @@ async def render_note(note_id: int, db: aiosqlite.Connection = Depends(get_db)):
         "preview": preview
     }
 
-@router.post("/preview")
+@router.post("/preview", dependencies=[read_access])
 async def preview_markdown(note: NoteCreate):
     """Preview markdown rendering without saving"""
     if not note.is_markdown:
         return {
-            "html": f"<pre>{note.content}</pre>",
+            "html": f"<pre>{html.escape(note.content)}</pre>",
             "is_markdown": False,
             "preview": note.content[:200]
         }

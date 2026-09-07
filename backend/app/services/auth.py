@@ -2,16 +2,84 @@
 Authentication service
 Handles JWT tokens, password hashing, and user authentication
 """
+import logging
+import os
+import secrets
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
+
 from passlib.context import CryptContext
 from jose import JWTError, jwt
-import os
 
-# JWT settings
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
+logger = logging.getLogger(__name__)
+
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24)))
+
+# Placeholder that shipped in older .env.example files. Treating it as "unset"
+# stops a well-known signing key from silently protecting a real deployment.
+_INSECURE_PLACEHOLDERS = {
+    "",
+    "your-secret-key-change-this-in-production",
+    "change-me",
+    "changeme",
+    "secret",
+}
+
+
+def _resolve_secret_key() -> str:
+    """
+    Resolve the JWT signing key.
+
+    Order of preference:
+      1. SECRET_KEY from the environment (the only option for multi-process
+         deployments, since every worker must sign with the same key).
+      2. A random key persisted next to the database, generated on first run.
+
+    A generated key keeps single-node installs secure by default while still
+    surviving restarts, which an in-memory key would not.
+    """
+    env_key = (os.getenv("SECRET_KEY") or "").strip()
+    if env_key and env_key.lower() not in _INSECURE_PLACEHOLDERS:
+        return env_key
+
+    if env_key:
+        logger.warning(
+            "SECRET_KEY is set to a well-known placeholder value and is being ignored. "
+            "Set a strong SECRET_KEY in the environment for production deployments."
+        )
+
+    key_path = Path(os.getenv("SECRET_KEY_FILE", "./data/.secret_key"))
+    try:
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+        if key_path.exists():
+            stored = key_path.read_text(encoding="utf-8").strip()
+            if stored:
+                return stored
+        generated = secrets.token_urlsafe(64)
+        key_path.write_text(generated, encoding="utf-8")
+        try:
+            key_path.chmod(0o600)
+        except OSError:
+            pass
+        logger.warning(
+            "SECRET_KEY was not provided; generated one at %s. "
+            "Set SECRET_KEY explicitly if you run more than one backend process.",
+            key_path,
+        )
+        return generated
+    except OSError as exc:
+        # Read-only filesystem: fall back to a process-local key. Tokens will
+        # not survive a restart, which is safer than a predictable key.
+        logger.error(
+            "Could not persist a generated SECRET_KEY (%s); using an ephemeral key. "
+            "Tokens will be invalidated on restart.", exc
+        )
+        return secrets.token_urlsafe(64)
+
+
+SECRET_KEY = _resolve_secret_key()
 
 # Password hashing
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
@@ -115,38 +183,71 @@ def check_permissions(user_permissions: list, required_permission: str) -> bool:
     return False
 
 
-# Default permissions structure
+# Default permissions structure.
+# Permission names are "<resource>.<action>"; check_permissions() also honours
+# "<resource>.*" wildcards and the "superuser" catch-all.
 DEFAULT_PERMISSIONS = {
     "admin": [
         "superuser"
     ],
     "editor": [
-        "scripts.read",
-        "scripts.create",
-        "scripts.update",
-        "scripts.delete",
-        "notes.read",
-        "notes.create",
-        "notes.update",
-        "notes.delete",
-        "tags.read",
-        "tags.create",
-        "tags.update",
-        "tags.delete",
-        "folders.read",
-        "folders.update",
-        "attachments.read",
-        "attachments.upload",
-        "attachments.delete"
+        "scripts.read", "scripts.create", "scripts.update", "scripts.delete",
+        "notes.read", "notes.create", "notes.update", "notes.delete",
+        "tags.read", "tags.create", "tags.update", "tags.delete",
+        "folders.read", "folders.update",
+        "attachments.read", "attachments.upload", "attachments.delete",
+        "roots.read", "roots.create", "roots.update", "roots.delete", "roots.scan",
+        "search.read", "search.create", "search.update", "search.delete",
+        "monitors.read", "monitors.create", "monitors.update", "monitors.delete",
+        "schedules.read", "schedules.create", "schedules.update",
+        "schedules.delete", "schedules.run",
+        "notifications.read", "notifications.update",
+        "incidents.read", "incidents.update",
     ],
     "viewer": [
         "scripts.read",
         "notes.read",
         "tags.read",
         "folders.read",
-        "attachments.read"
+        "attachments.read",
+        "roots.read",
+        "search.read",
+        "monitors.read",
+        "schedules.read",
+        "notifications.read",
+        "incidents.read",
     ]
 }
+
+
+async def sync_role_permissions(db):
+    """
+    Refresh the built-in roles' permission sets.
+
+    New resources (monitors, schedules, notifications) added permissions after
+    the roles were first seeded; without this an existing install would leave
+    editors and viewers unable to reach them.
+    """
+    import json
+
+    for role_name, permissions in DEFAULT_PERMISSIONS.items():
+        async with db.execute(
+            "SELECT id, permissions FROM roles WHERE name = ?", (role_name,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            continue
+        try:
+            current = set(json.loads(row[1]))
+        except (json.JSONDecodeError, TypeError):
+            current = set()
+        merged = sorted(current | set(permissions))
+        if merged != sorted(current):
+            await db.execute(
+                "UPDATE roles SET permissions = ? WHERE id = ?",
+                (json.dumps(merged), row[0]),
+            )
+    await db.commit()
 
 
 async def init_default_roles(db):
@@ -173,15 +274,21 @@ async def init_default_roles(db):
 
 
 async def init_default_admin(db):
-    """Initialize default admin user if no users exist"""
-    # Check if any users exist
+    """
+    Create a bootstrap admin account if the installation has no users at all.
+
+    Only reachable for installations that completed setup before the wizard
+    existed. The password is randomly generated and logged once rather than
+    being a well-known default, so an unattended upgrade never leaves an
+    admin/admin account exposed on the network.
+    """
     async with db.execute("SELECT COUNT(*) FROM users") as cursor:
         count = (await cursor.fetchone())[0]
         if count > 0:
             return
-    
-    # Create default admin user
-    hashed_password = get_password_hash("admin")
+
+    generated_password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD") or secrets.token_urlsafe(16)
+    hashed_password = get_password_hash(generated_password)
     cursor = await db.execute(
         """
         INSERT INTO users (username, email, full_name, hashed_password, is_active, is_superuser)
@@ -190,8 +297,7 @@ async def init_default_admin(db):
         ("admin", "admin@example.com", "Administrator", hashed_password, True, True)
     )
     user_id = cursor.lastrowid
-    
-    # Assign admin role
+
     async with db.execute("SELECT id FROM roles WHERE name = ?", ("admin",)) as cursor:
         role_row = await cursor.fetchone()
         if role_row:
@@ -199,7 +305,12 @@ async def init_default_admin(db):
                 "INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)",
                 (user_id, role_row[0])
             )
-    
+
     await db.commit()
-    print("Created default admin user (username: admin, password: admin)")
-    print("⚠️  IMPORTANT: Change the default admin password immediately!")
+    logger.warning(
+        "No users existed; created a bootstrap admin account.\n"
+        "    username: admin\n"
+        "    password: %s\n"
+        "Sign in and change this password immediately.",
+        generated_password,
+    )

@@ -6,18 +6,50 @@
 http://localhost:8000/api
 ```
 
+The bundled frontend container proxies `/api` to the backend, so a browser
+client can use same-origin relative URLs.
+
+## Authorization
+
+Every endpoint requires a bearer token and the permission named beside it,
+except:
+
+- `/api/setup/*` — the installation wizard, which runs before any account exists
+- `POST /api/auth/login` and `GET /api/auth/config`
+- `GET /health`
+- `POST /api/monitors/ping/{ping_key}` — the random ping key is the credential
+
+Send the token as `Authorization: Bearer <token>`. A request without one gets
+`401`; one whose account lacks the permission gets `403` naming the permission
+required. Set `REQUIRE_AUTH=false` to disable enforcement entirely for a local
+single-user setup.
+
+Permissions are `<resource>.<action>`; `<resource>.*` and `superuser` are
+wildcards. See the Authentication & RBAC section of the README for the roles.
+
 ## Endpoints
 
 ### Health Check
 
 **GET /health** - Returns API health status
 
-### Authentication (NEW)
+### Authentication
 
-- **POST /api/auth/login** - Login and get JWT token
-- **GET /api/auth/me** - Get current user info
-- **POST /api/auth/register** - Register new user
-- **PUT /api/auth/change-password** - Change password
+- **POST /api/auth/login** - Log in (form-encoded) and receive a JWT access token
+- **GET /api/auth/me** - Current user, including the flattened permission set
+- **GET /api/auth/config** - Public: whether auth is enforced and self-registration is on
+- **POST /api/auth/register** - Create a user. Administrators always may; anonymous
+  callers only when `ALLOW_SELF_REGISTRATION=true`
+- **PUT /api/auth/change-password** - Change the current user's password.
+  Takes a JSON body `{old_password, new_password}`; the credentials are not
+  accepted as query parameters
+- **GET /api/auth/users** - List users (admin)
+- **GET /api/auth/users/{id}** - Read a user (admin, or yourself)
+- **PUT /api/auth/users/{id}** - Update profile, roles, active state or password (admin)
+- **DELETE /api/auth/users/{id}** - Delete a user (admin)
+- **GET /api/auth/roles** - List roles and their permissions (admin)
+
+The last remaining administrator cannot be deleted, deactivated or demoted.
 
 ### Folder Roots
 
@@ -25,7 +57,12 @@ http://localhost:8000/api
 - **POST /api/folder-roots/** - Create a new folder root (with enable_content_indexing, enable_watch_mode)
 - **GET /api/folder-roots/{id}** - Get a specific folder root
 - **DELETE /api/folder-roots/{id}** - Delete a folder root
-- **POST /api/folder-roots/{id}/scan** - Scan a folder root for scripts
+- **PUT /api/folder-roots/{id}** - Update a root's settings, including
+  `enable_content_indexing` and `enable_watch_mode`. The path is immutable
+- **GET /api/folder-roots/stats** - Per-root script counts and last scan outcome
+- **POST /api/folder-roots/{id}/scan** - Start a scan (returns `202` with a `scan_id`)
+- **GET /api/folder-roots/{id}/scan/{scan_id}** - Poll a scan's progress
+- **GET /api/folder-roots/{id}/scans** - Recent scan history
 
 ### Scripts
 
@@ -127,22 +164,59 @@ http://localhost:8000/api
 - **DELETE /api/attachments/{id}** - Delete attachment
 - **GET /api/attachments/stats/all** - Get attachment statistics
 
+## Monitors
+
+- **GET /api/monitors/** - List monitors, evaluating overdue status first
+- **POST /api/monitors/** - Create a monitor (the response includes its ping key once)
+- **GET/PUT/DELETE /api/monitors/{id}** - Read, update or delete a monitor
+- **POST /api/monitors/{id}/pause** and **/resume** - Suspend or restore alerting
+- **GET /api/monitors/{id}/ping-url** - Reveal the ping key deliberately
+- **POST /api/monitors/ping/{ping_key}** - Record a heartbeat (unauthenticated)
+- **GET /api/monitors/{id}/pings** - Ping history
+- **GET /api/monitors/{id}/incidents** - Incidents raised for this monitor
+
+Ping keys are omitted from listings; fetch one from the dedicated endpoint.
+
+## Schedules
+
+- **GET /api/schedules/** - List jobs
+- **POST /api/schedules/** - Create a job. The cron expression and timezone are
+  validated, and `next_run_at` is computed
+- **GET/PUT/DELETE /api/schedules/{id}** - Read, update or delete a job
+- **POST /api/schedules/{id}/enable** and **/disable**
+- **POST /api/schedules/{id}/trigger** - Run immediately, outside the schedule
+- **GET /api/schedules/{id}/executions** - Execution history
+- **GET /api/schedules/{id}/executions/{execution_id}** - One execution with its logs
+- **GET /api/schedules/{id}/metrics** - Duration and success-rate trends
+- **GET /api/schedules/preview/cron** - Validate an expression and preview its next runs
+
+Jobs are executed by the backend's own scheduler; no external cron is needed.
+
+## Notifications
+
+- **GET/POST /api/notifications/channels/** - List or create channels
+- **GET /api/notifications/channels/types** - Config fields each channel type expects
+- **GET/PUT/DELETE /api/notifications/channels/{id}**
+- **POST /api/notifications/channels/{id}/test** - Send a real test message; the
+  outcome is reported in the body as `{success, message}` rather than as an HTTP error
+- **GET /api/notifications/incidents/** - List incidents (`status`, `source_type`, `limit`)
+- **GET /api/notifications/incidents/stats** - Counts by status and severity
+- **GET/PUT/DELETE /api/notifications/incidents/{id}**
+
+Secret configuration values are always returned as `***`. Submitting `***` back
+on an update preserves the stored value.
+
+## Timestamps
+
+All timestamps are returned in UTC with an explicit offset (for example
+`2026-09-06T22:28:45Z`), so clients can render them in the viewer's own timezone
+without guessing.
+
 ## Interactive Documentation
 
-FastAPI provides interactive API documentation:
+FastAPI serves the generated, always-current reference:
+
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-## Authentication
-
-For protected endpoints, include JWT token in header:
-```
-Authorization: Bearer <your_jwt_token>
-```
-
-Get token via POST /api/auth/login
-
-## Total Endpoints: 73
-
-- Core Features: 41 endpoints
-- Optional Features: 32 endpoints
+Treat those as authoritative; this file is a summary.

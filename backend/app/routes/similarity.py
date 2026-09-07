@@ -7,11 +7,14 @@ import aiosqlite
 
 from app.db.database import get_db
 from app.services.similarity import find_similar_scripts, find_all_similar_groups, get_similarity_matrix
+from app.routes.deps import require_permission
 
 router = APIRouter()
 
+read_access = Depends(require_permission("scripts.read"))
 
-@router.get("/{script_id}")
+
+@router.get("/{script_id}", dependencies=[read_access])
 async def get_similar_scripts(
     script_id: int,
     threshold: float = Query(0.7, ge=0.0, le=1.0, description="Similarity threshold (0.0 to 1.0)"),
@@ -42,7 +45,7 @@ async def get_similar_scripts(
         raise HTTPException(status_code=500, detail=f"Similarity detection failed: {str(e)}")
 
 
-@router.get("/groups/all")
+@router.get("/groups/all", dependencies=[read_access])
 async def get_similarity_groups(
     threshold: float = Query(0.8, ge=0.0, le=1.0, description="Similarity threshold"),
     min_group_size: int = Query(2, ge=2, le=10, description="Minimum scripts per group"),
@@ -58,18 +61,23 @@ async def get_similarity_groups(
     - **min_group_size**: Minimum number of scripts required to form a group
     """
     try:
-        groups = await find_all_similar_groups(db, threshold, min_group_size)
+        result = await find_all_similar_groups(db, threshold, min_group_size)
         return {
             'threshold': threshold,
             'min_group_size': min_group_size,
-            'group_count': len(groups),
-            'groups': groups
+            'group_count': len(result['groups']),
+            'groups': result['groups'],
+            # Surfaced so the UI can say the sweep was capped rather than
+            # implying it covered the whole collection.
+            'scripts_compared': result['scripts_compared'],
+            'truncated': result['truncated'],
+            'max_scripts': result['max_scripts'],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Group detection failed: {str(e)}")
 
 
-@router.post("/matrix")
+@router.post("/matrix", dependencies=[read_access])
 async def similarity_matrix(
     script_ids: List[int],
     db: aiosqlite.Connection = Depends(get_db)
@@ -91,11 +99,15 @@ async def similarity_matrix(
     try:
         matrix = await get_similarity_matrix(db, script_ids)
         return matrix
+    except ValueError as exc:
+        # Unknown or duplicated script ids are the caller's mistake, not a
+        # server fault; they used to surface as a 500.
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Matrix generation failed: {str(e)}")
 
 
-@router.get("/compare/{script_id1}/{script_id2}")
+@router.get("/compare/{script_id1}/{script_id2}", dependencies=[read_access])
 async def compare_two_scripts(
     script_id1: int,
     script_id2: int,

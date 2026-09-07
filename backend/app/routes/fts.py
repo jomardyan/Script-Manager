@@ -6,11 +6,15 @@ import aiosqlite
 
 from app.db.database import get_db
 from app.models.schemas import FTSSearchRequest, PaginatedResponse
+from app.routes.deps import require_permission
 from app.services.fts import search_fts, rebuild_fts_index
 
 router = APIRouter()
 
-@router.post("/", response_model=PaginatedResponse)
+read_access = Depends(require_permission("search.read"))
+rebuild_access = Depends(require_permission("roots.scan"))
+
+@router.post("/", response_model=PaginatedResponse, dependencies=[read_access])
 async def fts_search(
     search: FTSSearchRequest,
     db: aiosqlite.Connection = Depends(get_db)
@@ -29,10 +33,13 @@ async def fts_search(
             search.page_size
         )
         return result
+    except ValueError as exc:
+        # Bad user input (e.g. an empty query) is a 400, not a server error.
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"FTS search failed: {str(e)}")
 
-@router.post("/rebuild")
+@router.post("/rebuild", dependencies=[rebuild_access])
 async def rebuild_index(
     root_id: int = None,
     db: aiosqlite.Connection = Depends(get_db)
@@ -51,7 +58,7 @@ async def rebuild_index(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Index rebuild failed: {str(e)}")
 
-@router.get("/status")
+@router.get("/status", dependencies=[read_access])
 async def fts_status(db: aiosqlite.Connection = Depends(get_db)):
     """Get FTS index status and statistics"""
     # Count indexed scripts

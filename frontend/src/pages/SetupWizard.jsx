@@ -295,7 +295,7 @@ function AdminStep({ adminConfig, setAdminConfig, errors, onNext, onBack }) {
   );
 }
 
-function DoneStep({ mode, onEnter }) {
+function DoneStep({ mode, onEnter, demoCredentials }) {
   const modeInfo = MODES.find((m) => m.value === mode) || MODES[1];
   return (
     <div className="wizard-step-content wizard-done">
@@ -308,7 +308,17 @@ function DoneStep({ mode, onEnter }) {
       {mode === 'demo' && (
         <div className="wizard-done-notice">
           Sample scripts, tags, and a demo folder root have been pre-loaded so you can explore
-          immediately. Switch to <em>Production Setup</em> whenever you're ready to use real data.
+          immediately.
+          {demoCredentials ? (
+            <>
+              <br /><br />
+              <strong>Sign in with these credentials.</strong> They are shown only once:
+              <br />
+              Username: <code>{demoCredentials.username}</code>
+              <br />
+              Password: <code>{demoCredentials.password}</code>
+            </>
+          ) : null}
         </div>
       )}
 
@@ -342,6 +352,7 @@ export default function SetupWizard({ onSetupComplete }) {
   const [testing, setTesting] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+  const [demoCredentials, setDemoCredentials] = useState(null);
 
   const handleModeSelect = async (selectedMode) => {
     setMode(selectedMode);
@@ -351,7 +362,10 @@ export default function SetupWizard({ onSetupComplete }) {
       // Skip configuration — activate demo right away
       setSubmitting(true);
       try {
-        await setupApi.activateDemo();
+        const result = await setupApi.activateDemo();
+        // Demo mode now creates an administrator; without its one-time
+        // password nobody could sign in to the instance it just enabled.
+        setDemoCredentials(result.credentials || null);
         setStep(STEPS.DONE);
       } catch (err) {
         setSubmitError(err.message);
@@ -487,7 +501,7 @@ export default function SetupWizard({ onSetupComplete }) {
                 />
               )}
               {step === STEPS.DONE && (
-                <DoneStep mode={mode} onEnter={onSetupComplete} />
+                <DoneStep mode={mode} demoCredentials={demoCredentials} onEnter={onSetupComplete} />
               )}
             </>
           )}

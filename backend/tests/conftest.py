@@ -12,6 +12,10 @@ from httpx import AsyncClient, ASGITransport
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+# The background scheduler would fire real subprocesses against the per-test
+# database, so it stays off for the whole suite.
+os.environ.setdefault("ENABLE_SCHEDULER", "false")
+
 import app.db.database as _db_mod
 # Route modules that imported DB_PATH using `from app.db.database import DB_PATH`
 # hold a local string reference (not a module attribute lookup), so patching
@@ -24,6 +28,9 @@ from main import app as _app
 
 # All modules that carry their own DB_PATH reference alongside _db_mod
 _DB_PATH_MODULES = (_sched_mod, _fr_mod, _watch_mod)
+
+ADMIN_USERNAME = "testadmin"
+ADMIN_PASSWORD = "TestPass123!"
 
 
 @pytest_asyncio.fixture
@@ -42,15 +49,18 @@ async def app():
     await _db_mod.init_db()
 
     # Seed default roles into the test database
-    from app.services.auth import init_default_roles
+    from app.services.auth import init_default_roles, sync_role_permissions
     async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
+        await _db_mod.apply_connection_pragmas(db)
         await init_default_roles(db)
+        await sync_role_permissions(db)
 
     # Override get_db to always use our temp database
     async def _override_get_db():
         async with aiosqlite.connect(db_path) as db:
             db.row_factory = aiosqlite.Row
+            await _db_mod.apply_connection_pragmas(db)
             yield db
 
     # Snapshot and restore only the specific override we add so we don't
@@ -75,37 +85,86 @@ async def app():
 
 
 @pytest_asyncio.fixture
-async def client(app):
-    """Async HTTP client bound to the test app."""
+async def anon_client(app):
+    """
+    Async HTTP client with no credentials.
+
+    Use this for endpoints that must work before anyone can sign in (the setup
+    wizard) and for asserting that protected endpoints reject anonymous callers.
+    """
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as ac:
         yield ac
 
 
-@pytest_asyncio.fixture
-async def auth_client(client):
-    """Client with a valid admin JWT token pre-attached."""
-    # Complete setup first so an admin account exists
-    resp = await client.post(
+async def _bootstrap_admin(ac: AsyncClient) -> str:
+    """Complete setup so an admin account exists, then return its access token."""
+    resp = await ac.post(
         "/api/setup/complete",
         json={
             "mode": "development",
             "database": {"type": "sqlite"},
             "admin": {
-                "username": "testadmin",
+                "username": ADMIN_USERNAME,
                 "email": "testadmin@example.com",
-                "password": "TestPass123!",
+                "password": ADMIN_PASSWORD,
             },
         },
     )
     assert resp.status_code in (200, 201, 409), resp.text
 
-    login = await client.post(
+    login = await ac.post(
         "/api/auth/login",
-        data={"username": "testadmin", "password": "TestPass123!"},
+        data={"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD},
     )
     assert login.status_code == 200, login.text
-    token = login.json()["access_token"]
-    client.headers.update({"Authorization": f"Bearer {token}"})
+    return login.json()["access_token"]
+
+
+@pytest_asyncio.fixture
+async def client(app):
+    """
+    Default client: authenticated as an administrator.
+
+    The API enforces RBAC on every resource, so the common case for a test is
+    an authenticated caller. Tests that need an anonymous caller use
+    `anon_client`.
+    """
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        token = await _bootstrap_admin(ac)
+        ac.headers.update({"Authorization": f"Bearer {token}"})
+        yield ac
+
+
+@pytest_asyncio.fixture
+async def auth_client(client):
+    """Alias kept for tests that explicitly ask for an authenticated client."""
     return client
+
+
+@pytest_asyncio.fixture
+async def viewer_client(app, client):
+    """A second client signed in as a read-only viewer, for RBAC assertions."""
+    created = await client.post(
+        "/api/auth/register",
+        json={
+            "username": "testviewer",
+            "email": "testviewer@example.com",
+            "password": "ViewerPass123!",
+        },
+    )
+    assert created.status_code in (200, 201), created.text
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        login = await ac.post(
+            "/api/auth/login",
+            data={"username": "testviewer", "password": "ViewerPass123!"},
+        )
+        assert login.status_code == 200, login.text
+        ac.headers.update({"Authorization": f"Bearer {login.json()['access_token']}"})
+        yield ac

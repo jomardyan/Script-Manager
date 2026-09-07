@@ -54,15 +54,13 @@ services:
     container_name: script-manager-frontend
     expose:
       - 3000
-    environment:
-      - VITE_API_URL=http://localhost/api
     restart: unless-stopped
     networks:
       - script-manager-network
     depends_on:
       - backend
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -8,10 +8,16 @@ import json
 
 from app.db.database import get_db
 from app.models.schemas import SavedSearchCreate, SavedSearchResponse
+from app.routes.deps import require_permission
 
 router = APIRouter()
 
-@router.get("/", response_model=List[SavedSearchResponse])
+read_access = Depends(require_permission("search.read"))
+create_access = Depends(require_permission("search.create"))
+update_access = Depends(require_permission("search.update"))
+delete_access = Depends(require_permission("search.delete"))
+
+@router.get("/", response_model=List[SavedSearchResponse], dependencies=[read_access])
 async def list_saved_searches(db: aiosqlite.Connection = Depends(get_db)):
     """List all saved searches"""
     async with db.execute(
@@ -26,7 +32,7 @@ async def list_saved_searches(db: aiosqlite.Connection = Depends(get_db)):
             results.append(item)
         return results
 
-@router.post("/", response_model=SavedSearchResponse)
+@router.post("/", response_model=SavedSearchResponse, status_code=201, dependencies=[create_access])
 async def create_saved_search(
     search: SavedSearchCreate,
     db: aiosqlite.Connection = Depends(get_db)
@@ -56,7 +62,7 @@ async def create_saved_search(
     except aiosqlite.IntegrityError:
         raise HTTPException(status_code=400, detail="Saved search with this name already exists")
 
-@router.get("/{search_id}", response_model=SavedSearchResponse)
+@router.get("/{search_id}", response_model=SavedSearchResponse, dependencies=[read_access])
 async def get_saved_search(search_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Get a specific saved search"""
     async with db.execute(
@@ -70,7 +76,7 @@ async def get_saved_search(search_id: int, db: aiosqlite.Connection = Depends(ge
         result['query_params'] = json.loads(result['query_params'])
         return result
 
-@router.put("/{search_id}", response_model=SavedSearchResponse)
+@router.put("/{search_id}", response_model=SavedSearchResponse, dependencies=[update_access])
 async def update_saved_search(
     search_id: int,
     search: SavedSearchCreate,
@@ -106,7 +112,7 @@ async def update_saved_search(
         result['query_params'] = json.loads(result['query_params'])
         return result
 
-@router.delete("/{search_id}")
+@router.delete("/{search_id}", dependencies=[delete_access])
 async def delete_saved_search(search_id: int, db: aiosqlite.Connection = Depends(get_db)):
     """Delete a saved search"""
     async with db.execute(

@@ -61,3 +61,6 @@ backend/data/
 *.sqlite
 *.sqlite3
 *.pid
+
+# Runtime state when the backend is started from the repository root
+data/
